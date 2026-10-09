@@ -694,9 +694,22 @@
        manual ：到達重生時間後停在「已重生」，必須按「擊殺」才進入下一個循環
        最大 ≠ 最小的王一律為手動。尚未設定過的王預設為自動（沿用原行為）。
     ========================================== */
+    // 資料庫存的值可能是舊格式字串 'auto' | 'manual'，或新格式 { mode, since }
+    function getBossCycleRaw(boss) {
+      const v = bossCycleCache ? bossCycleCache[boss.id] : null;
+      return (v && typeof v === 'object') ? v : { mode: v, since: null };
+    }
+
     function getBossCycleMode(boss) {
       if (boss.minMin !== boss.maxMin) return 'manual';
-      return bossCycleCache && bossCycleCache[boss.id] === 'manual' ? 'manual' : 'auto';
+      return getBossCycleRaw(boss).mode === 'manual' ? 'manual' : 'auto';
+    }
+
+    // 由自動切換為手動的時間點：該時間點「正在進行的那一輪」會照常倒數完畢
+    function getBossManualSince(boss) {
+      if (boss.minMin !== boss.maxMin) return null;
+      const since = getBossCycleRaw(boss).since;
+      return since ? parseInt(since) : null;
     }
 
     function updateCycleSwitch() {
@@ -717,7 +730,11 @@
         alert("重生時間最大與最小不同的王，只能使用手動巡迴！");
         return;
       }
-      db.ref(`rooms/${roomId}/bossCycleSettings/${currentBoss.id}`).set(mode).catch(() => {
+      if (getBossCycleMode(currentBoss) === mode) return; // 已是該模式，避免重設切換時間
+      const value = (mode === 'manual' && currentBoss.minMin === currentBoss.maxMin)
+        ? { mode: 'manual', since: Date.now() }
+        : { mode: mode };
+      db.ref(`rooms/${roomId}/bossCycleSettings/${currentBoss.id}`).set(value).catch(() => {
         alert("寫入資料庫失敗，請重試！");
       });
     }
@@ -849,7 +866,7 @@
       for (let ch = 1; ch <= 60; ch++) {
         const info = getChannelData(boss.id, ch);
         if (!info.killTime) continue;
-        const st = resolveChannelState(info, boss, cdSec, now, getBossCycleMode(boss));
+        const st = resolveChannelState(info, boss, cdSec, now, getBossCycleMode(boss), getBossManualSince(boss));
         if (st.cdStart) continue; // 玩家冷卻中不列入
         const remainSec = (st.kill + minMs - now) / 1000;
         if (remainSec <= SOON_SEC) soon++; else counting++;
@@ -1010,10 +1027,18 @@
        只在畫面上換算，絕對不寫回 Firebase，
        所以太久沒開網頁也不會把原始擊殺時間蓋掉。
     ========================================== */
-    function resolveChannelState(info, boss, playerCdSec, now, mode) {
+    function resolveChannelState(info, boss, playerCdSec, now, mode, manualSince) {
       let kill = parseInt(info.killTime);
-      // 手動巡迴：不推算下一個循環，停在原始擊殺時間，等玩家按「擊殺」
-      if (mode === 'manual') return { kill: kill, cdStart: null };
+      // 手動巡迴：不進入玩家冷卻與下一個循環，停在「已重生」，等玩家按「擊殺」。
+      // 若是由自動巡迴切換而來（manualSince），切換當下正在跑的那一輪要照常倒數完畢：
+      // 先用自動規則推算到切換時間點，取得當時那一輪的擊殺時間作為基準。
+      if (mode === 'manual') {
+        if (manualSince) {
+          const anchored = resolveChannelState(info, boss, playerCdSec, manualSince, 'auto');
+          return { kill: anchored.kill, cdStart: null };
+        }
+        return { kill: kill, cdStart: null };
+      }
       let cdStart = info.playerCdStartTime ? parseInt(info.playerCdStartTime) : null;
       const w = (boss.minMin === boss.maxMin ? boss.minMin : boss.maxMin) * 60 * 1000;
       const cd = playerCdSec * 1000;
@@ -1063,7 +1088,7 @@
         let playerCdStartTime = null;
 
         if (chInfo.killTime) {
-          const st = resolveChannelState(chInfo, currentBoss, playerCdSec, now, cycleMode);
+          const st = resolveChannelState(chInfo, currentBoss, playerCdSec, now, cycleMode, getBossManualSince(currentBoss));
           killTime = st.kill;
           playerCdStartTime = st.cdStart;
           remainingMs = (killTime + currentBoss.minMin * 60 * 1000) - now;
