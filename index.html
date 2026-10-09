@@ -203,6 +203,20 @@
       border: 1.5px solid #2980b9; color: #2980b9; background-color: #fff; font-weight: 900; opacity: 1; box-shadow: 0 0 4px rgba(41, 128, 185, 0.4);
     }
 
+    /* 個別頻道巡迴模式：自 = 自動、手 = 手動（卡片左側） */
+    .cycle-badge {
+      position: absolute; left: 3px; top: 22px;
+      width: 16px; height: 16px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: bold; color: #fff;
+      cursor: pointer; user-select: none; z-index: 5;
+      border: 1px solid rgba(255,255,255,0.8);
+    }
+    .cycle-badge.auto { background: #4a6278; }
+    .cycle-badge.manual { background: #e67e22; }
+    .cycle-badge.locked { cursor: not-allowed; opacity: 0.7; }
+    .cycle-badge:not(.locked):hover { filter: brightness(1.15); }
+
     /* 迷霧遮罩 */
     .fog-overlay {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -287,10 +301,10 @@
         <p id="current-boss-info">重生時間：-- 分鐘</p>
       </div>
       <div id="cycle-switch" class="cycle-switch">
-        <span class="cycle-label">巡迴模式</span>
+        <span class="cycle-label">全體切換</span>
         <div class="cycle-seg">
-          <button type="button" id="cycle-auto-btn" onclick="setBossCycleMode('auto')" title="冷卻結束後自動進入下一個循環">自動巡迴</button>
-          <button type="button" id="cycle-manual-btn" onclick="setBossCycleMode('manual')" title="到達重生時間後，需按「擊殺」才進入下一個循環">手動巡迴</button>
+          <button type="button" id="cycle-auto-btn" onclick="setBossCycleMode('auto')" title="將此王所有頻道切換為自動巡迴">全體自動</button>
+          <button type="button" id="cycle-manual-btn" onclick="setBossCycleMode('manual')" title="將此王所有頻道切換為手動巡迴">全體手動</button>
         </div>
       </div>
       <div class="header-btns">
@@ -694,47 +708,82 @@
        manual ：到達重生時間後停在「已重生」，必須按「擊殺」才進入下一個循環
        最大 ≠ 最小的王一律為手動。尚未設定過的王預設為自動（沿用原行為）。
     ========================================== */
-    // 資料庫存的值可能是舊格式字串 'auto' | 'manual'，或新格式 { mode, since }
-    function getBossCycleRaw(boss) {
+    // 資料庫 bossCycleSettings/<bossId> 的格式：
+    //   { mode, since }            → 該王「全體」預設
+    //   { ..., ch<N>: {mode,since} } → 個別頻道的設定（優先於全體預設）
+    //   或舊格式字串 'auto' | 'manual'
+    function getBossCycleEntry(boss, ch) {
       const v = bossCycleCache ? bossCycleCache[boss.id] : null;
-      return (v && typeof v === 'object') ? v : { mode: v, since: null };
+      if (v && typeof v === 'object') {
+        const own = v['ch' + ch];
+        if (own && typeof own === 'object') return own;
+        return { mode: v.mode, since: v.since };
+      }
+      return { mode: v, since: null };
     }
 
-    function getBossCycleMode(boss) {
+    function getBossCycleMode(boss, ch) {
       if (boss.minMin !== boss.maxMin) return 'manual';
-      return getBossCycleRaw(boss).mode === 'manual' ? 'manual' : 'auto';
+      return getBossCycleEntry(boss, ch).mode === 'manual' ? 'manual' : 'auto';
     }
 
     // 由自動切換為手動的時間點：該時間點「正在進行的那一輪」會照常倒數完畢
-    function getBossManualSince(boss) {
+    function getBossManualSince(boss, ch) {
       if (boss.minMin !== boss.maxMin) return null;
-      const since = getBossCycleRaw(boss).since;
+      const since = getBossCycleEntry(boss, ch).since;
       return since ? parseInt(since) : null;
+    }
+
+    // 目前這隻王 60 個頻道是否全部同一模式：回傳 'auto' | 'manual' | 'mixed'
+    function getBossAllMode(boss) {
+      let auto = 0, manual = 0;
+      for (let ch = 1; ch <= 60; ch++) {
+        if (getBossCycleMode(boss, ch) === 'auto') auto++; else manual++;
+      }
+      return manual === 0 ? 'auto' : (auto === 0 ? 'manual' : 'mixed');
     }
 
     function updateCycleSwitch() {
       const autoBtn = document.getElementById('cycle-auto-btn');
       const manualBtn = document.getElementById('cycle-manual-btn');
       if (!autoBtn || !manualBtn || !currentBoss) return;
-      const mode = getBossCycleMode(currentBoss);
+      const all = getBossAllMode(currentBoss);
       const canAuto = currentBoss.minMin === currentBoss.maxMin;
-      autoBtn.classList.toggle('active', mode === 'auto');
-      manualBtn.classList.toggle('active', mode === 'manual');
+      autoBtn.classList.toggle('active', all === 'auto');
+      manualBtn.classList.toggle('active', all === 'manual');
       autoBtn.disabled = !canAuto;
-      autoBtn.title = canAuto ? '冷卻結束後自動進入下一個循環' : '重生時間為區間的王只能使用手動巡迴';
+      autoBtn.title = canAuto ? '將此王所有頻道切換為自動巡迴' : '重生時間為區間的王只能使用手動巡迴';
+      manualBtn.title = '將此王所有頻道切換為手動巡迴';
     }
 
+    // 全體切換：一次設定這隻王所有頻道（同時清除個別頻道的設定）
     function setBossCycleMode(mode) {
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
       if (mode === 'auto' && currentBoss.minMin !== currentBoss.maxMin) {
         alert("重生時間最大與最小不同的王，只能使用手動巡迴！");
         return;
       }
-      if (getBossCycleMode(currentBoss) === mode) return; // 已是該模式，避免重設切換時間
+      if (getBossAllMode(currentBoss) === mode) return; // 已全體為該模式，避免重設切換時間
+      const label = mode === 'auto' ? '全體自動巡迴' : '全體手動巡迴';
+      if (!confirm(`確定將【${currentBoss.name}】的所有頻道切換為「${label}」嗎？`)) return;
       const value = (mode === 'manual' && currentBoss.minMin === currentBoss.maxMin)
         ? { mode: 'manual', since: Date.now() }
         : { mode: mode };
       db.ref(`rooms/${roomId}/bossCycleSettings/${currentBoss.id}`).set(value).catch(() => {
+        alert("寫入資料庫失敗，請重試！");
+      });
+    }
+
+    // 單一頻道切換（點卡片左側的「自／手」圓圈）
+    function toggleChannelCycle(ch) {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      if (currentBoss.minMin !== currentBoss.maxMin) {
+        alert("重生時間為區間的王，只能使用手動巡迴！");
+        return;
+      }
+      const next = getBossCycleMode(currentBoss, ch) === 'auto' ? 'manual' : 'auto';
+      const value = next === 'manual' ? { mode: 'manual', since: Date.now() } : { mode: 'auto' };
+      db.ref(`rooms/${roomId}/bossCycleSettings/${currentBoss.id}/ch${ch}`).set(value).catch(() => {
         alert("寫入資料庫失敗，請重試！");
       });
     }
@@ -866,7 +915,7 @@
       for (let ch = 1; ch <= 60; ch++) {
         const info = getChannelData(boss.id, ch);
         if (!info.killTime) continue;
-        const st = resolveChannelState(info, boss, cdSec, now, getBossCycleMode(boss), getBossManualSince(boss));
+        const st = resolveChannelState(info, boss, cdSec, now, getBossCycleMode(boss, ch), getBossManualSince(boss, ch));
         if (st.cdStart) continue; // 玩家冷卻中不列入
         const remainSec = (st.kill + minMs - now) / 1000;
         if (remainSec <= SOON_SEC) soon++; else counting++;
@@ -1078,7 +1127,6 @@
       grid.innerHTML = '';
       const now = Date.now();
       const playerCdSec = getBossCdSec(currentBoss.id);
-      const cycleMode = getBossCycleMode(currentBoss);
 
       let channelsData = [];
       for (let ch = 1; ch <= 60; ch++) {
@@ -1088,7 +1136,7 @@
         let playerCdStartTime = null;
 
         if (chInfo.killTime) {
-          const st = resolveChannelState(chInfo, currentBoss, playerCdSec, now, cycleMode, getBossManualSince(currentBoss));
+          const st = resolveChannelState(chInfo, currentBoss, playerCdSec, now, getBossCycleMode(currentBoss, ch), getBossManualSince(currentBoss, ch));
           killTime = st.kill;
           playerCdStartTime = st.cdStart;
           remainingMs = (killTime + currentBoss.minMin * 60 * 1000) - now;
@@ -1100,6 +1148,7 @@
           isSolo: chInfo.isSolo,
           isSteal: chInfo.isSteal,
           playerCdStartTime: playerCdStartTime,
+          cycleMode: getBossCycleMode(currentBoss, ch),
           remainingMs: remainingMs 
         });
       }
@@ -1190,6 +1239,10 @@
                  onclick="toggleNote(${ch}, 'steal')" 
                  title="必須搶奪 (點擊切換)">搶</div>
           </div>
+
+          <div class="cycle-badge ${item.cycleMode === 'auto' ? 'auto' : 'manual'} ${currentBoss.minMin !== currentBoss.maxMin ? 'locked' : ''}"
+               onclick="toggleChannelCycle(${ch})"
+               title="${item.cycleMode === 'auto' ? '自動巡迴（點擊切換為手動）' : (currentBoss.minMin !== currentBoss.maxMin ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）')}">${item.cycleMode === 'auto' ? '自' : '手'}</div>
 
           <div class="ch-title">${ch} 頻</div>
           <div class="ch-status">${statusText}</div>
