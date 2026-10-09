@@ -149,7 +149,9 @@
       transition: 0.1s; 
       position: relative;
     }
-    .channel-card.has-timer { border: 2px solid #e74c3c !important; }
+    /* 邊框顏色與左側 Boss 列表圓圈一致：綠 = 計時中、紅 = 剩 2 分鐘內（含已重生）、灰 = 尚未計時 */
+    .channel-card.has-timer { border: 2px solid #16a34a !important; }
+    .channel-card.has-timer.soon { border: 2px solid #e02424 !important; }
     .channel-card.counting { background: #edf5ff; }
     .channel-card.player-cd { background: #e8f8f5; border-color: #1abc9c !important; }
     .channel-card.maybe { background: #fff9db; } 
@@ -1132,6 +1134,11 @@
                 sendDiscordMsg(`⚠ **【可能重生】** [${roomId}] ${currentBoss.name} - ${ch} 頻 已進入可能重生時間區間！`);
                 notifiedState[`${tag}_min`] = true;
               }
+            }
+
+            // 與左側列表相同的「即將重生」判斷（SOON_SEC）：距離最早重生 2 分鐘內或已到重生時間
+            if (minMinSec - elapsedSec <= SOON_SEC) {
+              hasTimerClass += ' soon';
             }
 
             if (elapsedSec < minMinSec) {
