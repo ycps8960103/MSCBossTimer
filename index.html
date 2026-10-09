@@ -365,10 +365,6 @@
         <input type="checkbox" id="notifyEnabled" checked>
         <label for="notifyEnabled"><b>啟用 Discord 通知（總開關）</b></label>
       </div>
-      <div class="form-group">
-        <label>頻道 Webhook 網址</label>
-        <input type="text" id="webhookUrl" placeholder="https://discord.com/api/webhooks/...">
-      </div>
       <div class="checkbox-group">
         <input type="checkbox" id="notifyBefore" checked>
         <label for="notifyBefore">Boss 重生前 2 分鐘通知</label>
@@ -383,7 +379,7 @@
       </div>
       <div class="modal-btns">
         <button type="button" class="btn-save" onclick="saveDiscordConfig()">儲存設定</button>
-        <button type="button" class="btn-clear" onclick="removeDiscordConfig()">重置為預設 Webhook</button>
+        <button type="button" class="btn-clear" onclick="removeDiscordConfig()">還原通知選項預設值</button>
         <button type="button" class="btn-close" onclick="closeDiscordModal()">取消</button>
       </div>
     </div>
@@ -487,13 +483,17 @@
     
     let discordConfig = JSON.parse(localStorage.getItem('discord_config')) || { 
       enabled: true,
-      url: DEFAULT_WEBHOOK_URL, 
       respawn: true, 
       before: true, 
       kill: true 
     };
     // 相容舊版已儲存的設定（沒有 enabled 欄位時視為開啟）
     if (discordConfig.enabled === undefined) discordConfig.enabled = true;
+    // Webhook 網址不再允許在網頁中設定：清除舊版曾存在這台瀏覽器的網址，統一使用資料庫共用設定
+    if (discordConfig.url !== undefined) {
+      delete discordConfig.url;
+      localStorage.setItem('discord_config', JSON.stringify(discordConfig));
+    }
 
     let notifiedState = {};
 
@@ -1174,7 +1174,7 @@
     function sendDiscordMsg(content) {
       if (!isVersionValid) return;
       if (!discordConfig.enabled) return; // 通知總開關關閉時不發送
-      const url = discordConfig.url || DEFAULT_WEBHOOK_URL;
+      const url = DEFAULT_WEBHOOK_URL; // 由資料庫 rooms/<小隊>/discordWebhook 提供，不可在網頁修改
       if (!url) return;
       fetch(url, {
         method: 'POST',
@@ -1200,7 +1200,6 @@
     function openDiscordModal() {
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
       document.getElementById('notifyEnabled').checked = discordConfig.enabled;
-      document.getElementById('webhookUrl').value = discordConfig.url || DEFAULT_WEBHOOK_URL;
       document.getElementById('notifyBefore').checked = discordConfig.before;
       document.getElementById('notifyRespawn').checked = discordConfig.respawn;
       document.getElementById('notifyKill').checked = discordConfig.kill;
@@ -1215,7 +1214,6 @@
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
       discordConfig = {
         enabled: document.getElementById('notifyEnabled').checked,
-        url: document.getElementById('webhookUrl').value.trim() || DEFAULT_WEBHOOK_URL,
         before: document.getElementById('notifyBefore').checked,
         respawn: document.getElementById('notifyRespawn').checked,
         kill: document.getElementById('notifyKill').checked
@@ -1228,9 +1226,9 @@
 
     function removeDiscordConfig() {
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
-      discordConfig = { enabled: discordConfig.enabled, url: DEFAULT_WEBHOOK_URL, before: true, respawn: true, kill: true };
+      discordConfig = { enabled: discordConfig.enabled, before: true, respawn: true, kill: true };
       localStorage.setItem('discord_config', JSON.stringify(discordConfig));
-      alert('已重置為預設 Webhook 網址！');
+      alert('已還原通知選項預設值！');
       closeDiscordModal();
     }
 
