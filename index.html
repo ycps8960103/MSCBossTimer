@@ -1263,14 +1263,14 @@
             const beforeSec = (minMin - 2) * 60;
             if (discordConfig.before && beforeSec > 0 && elapsedSec >= beforeSec && elapsedSec < minMinSec && elapsedSec < beforeSec + NOTIFY_WINDOW_SEC) {
               if (!notifiedState[`${tag}_before`]) {
-                sendDiscordMsg(`⏳ **【重生預告】** [${roomId}] ${currentBoss.name} - ${ch} 頻 將在 2 分鐘後可能重生！`);
+                sendDiscordMsg(`⏳ **【重生預告】** [${roomId}] ${currentBoss.name} - ${ch} 頻 將在 2 分鐘後可能重生！`, `${tag}_before`);
                 notifiedState[`${tag}_before`] = true;
               }
             }
 
             if (discordConfig.respawn && elapsedSec >= minMinSec && elapsedSec < minMinSec + NOTIFY_WINDOW_SEC) {
               if (!notifiedState[`${tag}_min`]) {
-                sendDiscordMsg(`⚠ **【可能重生】** [${roomId}] ${currentBoss.name} - ${ch} 頻 已進入可能重生時間區間！`);
+                sendDiscordMsg(`⚠ **【可能重生】** [${roomId}] ${currentBoss.name} - ${ch} 頻 已進入可能重生時間區間！`, `${tag}_min`);
                 notifiedState[`${tag}_min`] = true;
               }
             }
@@ -1321,16 +1321,46 @@
       });
     }
 
-    function sendDiscordMsg(content) {
-      if (!isVersionValid) return;
-      if (!discordConfig.enabled) return; // 通知總開關關閉時不發送
-      const url = DEFAULT_WEBHOOK_URL; // 由資料庫 rooms/<小隊>/discordWebhook 提供，不可在網頁修改
-      if (!url) return;
+    function postToDiscord(url, content, onFail) {
       fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: content })
-      }).catch(err => console.error('Discord Webhook 發送失敗:', err));
+      }).then(res => {
+        if (!res.ok && onFail) onFail();
+      }).catch(err => {
+        console.error('Discord Webhook 發送失敗:', err);
+        if (onFail) onFail();
+      });
+    }
+
+    // claimKey：同一則通知的唯一代號。多人同時開著網頁時，
+    // 只有第一個成功「搶到發送權」（資料庫交易寫入代號）的人會真正發送，其他人略過，避免重複通知。
+    function sendDiscordMsg(content, claimKey) {
+      if (!isVersionValid) return;
+      if (!discordConfig.enabled) return; // 通知總開關關閉時不發送（也不會去搶發送權）
+      const url = DEFAULT_WEBHOOK_URL; // 由資料庫 rooms/<小隊>/discordWebhook 提供，不可在網頁修改
+      if (!url) return;
+
+      if (!claimKey) { postToDiscord(url, content); return; }
+
+      const safeKey = String(claimKey).replace(/[.#$\[\]\/]/g, '_');
+      const claimRef = db.ref(`rooms/${roomId}/discordSent/${safeKey}`);
+      claimRef.transaction(cur => (cur === null ? Date.now() : undefined)).then(result => {
+        if (!result.committed) return; // 已有人搶先發送
+        // 發送失敗時釋放發送權，讓其他人有機會補發
+        postToDiscord(url, content, () => { claimRef.remove().catch(() => {}); });
+        pruneDiscordClaims();
+      }).catch(() => { /* 無法取得發送權（例如網路問題）：不發送，避免重複 */ });
+    }
+
+    // 清掉超過 6 小時的發送紀錄，避免資料庫愈積愈多
+    function pruneDiscordClaims() {
+      const claims = (timerCache && timerCache.discordSent) || {};
+      const cutoff = Date.now() - 6 * 60 * 60 * 1000;
+      const upd = {};
+      Object.keys(claims).forEach(k => { if (typeof claims[k] === 'number' && claims[k] < cutoff) upd[k] = null; });
+      if (Object.keys(upd).length) db.ref(`rooms/${roomId}/discordSent`).update(upd).catch(() => {});
     }
 
     // 側邊欄一鍵開關 Discord 通知（只影響這台瀏覽器）
