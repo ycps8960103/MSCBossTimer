@@ -356,15 +356,23 @@
       <h3>⏱ 修正 / 手動補填時間</h3>
       <div class="form-group">
         <label>選擇 Boss</label>
-        <select id="fixBossSelect"></select>
+        <select id="fixBossSelect" onchange="updateFixHint()"></select>
+      </div>
+      <div class="form-group">
+        <label>輸入類型</label>
+        <select id="fixTypeSelect" onchange="onFixTypeChange()">
+          <option value="kill">擊殺時間（修正誤按 / 補填）</option>
+          <option value="respawn">預計重生時間（程式自動換算擊殺時間）</option>
+        </select>
       </div>
       <div class="form-group">
         <label>頻道 (1 ~ 60)</label>
         <input type="number" id="fixChannelInput" min="1" max="60" placeholder="請輸入頻道號碼，如: 23">
       </div>
       <div class="form-group">
-        <label>擊殺 / 重置時間 (今天)</label>
-        <input type="time" id="fixTimeInput" step="1">
+        <label id="fixTimeLabel">擊殺 / 重置時間 (今天)</label>
+        <input type="time" id="fixTimeInput" step="1" oninput="updateFixHint()" onchange="updateFixHint()">
+        <div id="fixTimeHint" style="font-size:12px;color:#8a7d66;margin-top:5px;min-height:16px;"></div>
       </div>
       <div class="modal-btns">
         <button type="button" class="btn-save" onclick="saveFixTime()">確認更新時間</button>
@@ -816,7 +824,62 @@
       const ss = String(now.getSeconds()).padStart(2, '0');
       document.getElementById('fixTimeInput').value = `${hh}:${mm}:${ss}`;
 
+      document.getElementById('fixTypeSelect').value = 'kill';
+      onFixTypeChange();
+
       document.getElementById('fixTimeModal').style.display = 'flex';
+    }
+
+    // 切換輸入類型：更新欄位名稱與換算提示
+    function onFixTypeChange() {
+      const type = document.getElementById('fixTypeSelect').value;
+      document.getElementById('fixTimeLabel').innerText =
+        type === 'respawn' ? '預計重生時間' : '擊殺 / 重置時間 (今天)';
+      updateFixHint();
+    }
+
+    // 依輸入類型換算出「擊殺時間」(毫秒)。
+    // - 擊殺時間：沿用原本規則，以今天的時分秒為準。
+    // - 預計重生時間：擊殺時間 = 重生時間 − 最早重生分鐘數。
+    //   重生時間可能落在今天、昨天或明天，這裡挑「不晚於現在」且最接近現在的那一個。
+    function computeFixKillTime(bossId, type, timeVal) {
+      const parts = timeVal.split(':');
+      const base = new Date();
+      base.setHours(parseInt(parts[0]), parseInt(parts[1]), parts[2] ? parseInt(parts[2]) : 0, 0);
+      const t = base.getTime();
+      if (type !== 'respawn') return t;
+
+      const boss = bosses.find(b => b.id === bossId);
+      const minMs = boss.minMin * 60 * 1000;
+      const DAY = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      let best = null;
+      [-DAY, 0, DAY].forEach(off => {
+        const kill = t + off - minMs;
+        if (kill <= now + 60 * 1000 && (best === null || kill > best)) best = kill;
+      });
+      return best !== null ? best : t - minMs;
+    }
+
+    function formatFixDateTime(ts) {
+      const d = new Date(ts);
+      const hms = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+      const today = new Date();
+      if (d.toDateString() === today.toDateString()) return hms;
+      return `${d.getMonth() + 1}/${d.getDate()} ${hms}`;
+    }
+
+    function updateFixHint() {
+      const hint = document.getElementById('fixTimeHint');
+      if (!hint) return;
+      const type = document.getElementById('fixTypeSelect').value;
+      const timeVal = document.getElementById('fixTimeInput').value;
+      const bossId = document.getElementById('fixBossSelect').value;
+      if (type !== 'respawn' || !timeVal || !bossId) { hint.innerText = ''; return; }
+      const boss = bosses.find(b => b.id === bossId);
+      const kill = computeFixKillTime(bossId, type, timeVal);
+      const extra = boss.minMin !== boss.maxMin ? '（區間王以最早重生時間換算）' : '';
+      hint.innerText = `將換算為擊殺時間 ${formatFixDateTime(kill)}（重生 ${boss.minMin} 分鐘）${extra}`;
     }
 
     function closeFixTimeModal() {
@@ -838,11 +901,8 @@
         return;
       }
 
-      const parts = timeVal.split(':');
-      const targetDate = new Date();
-      targetDate.setHours(parseInt(parts[0]), parseInt(parts[1]), parts[2] ? parseInt(parts[2]) : 0, 0);
-
-      const targetTimestamp = targetDate.getTime();
+      const type = document.getElementById('fixTypeSelect').value;
+      const targetTimestamp = computeFixKillTime(bossId, type, timeVal);
 
       delete notifiedState[`${bossId}_${ch}_before`];
       delete notifiedState[`${bossId}_${ch}_min`];
@@ -856,7 +916,12 @@
         playerCdStartTime: null
       });
 
-      alert(`已將【${bosses.find(b => b.id === bossId).name}】第 ${ch} 頻 的時間成功修正為 ${timeVal}！`);
+      const bossName = bosses.find(b => b.id === bossId).name;
+      if (type === 'respawn') {
+        alert(`已將【${bossName}】第 ${ch} 頻 的預計重生時間設定為 ${timeVal}（換算擊殺時間 ${formatFixDateTime(targetTimestamp)}）！`);
+      } else {
+        alert(`已將【${bossName}】第 ${ch} 頻 的時間成功修正為 ${timeVal}！`);
+      }
       closeFixTimeModal();
     }
 
