@@ -937,6 +937,7 @@
           bossCycleCache = val.bossCycleSettings || {};
           if (val.discordWebhook) DEFAULT_WEBHOOK_URL = val.discordWebhook;
           updateCycleSwitch();
+          scanAllBosses();
           initSidebar();
           renderChannels();
         }, () => {
@@ -972,33 +973,20 @@
     // 「即將重生」的判斷：距離最早重生時間 2 分鐘內，或已進入可能重生區間
     const SOON_SEC = 120;
 
-    // 統計某隻王 60 個頻道的狀態（純計算，不寫入資料庫）
-    function countBossChannels(boss, now) {
-      const cdSec = getBossCdSec(boss.id);
-      const minMs = boss.minMin * 60 * 1000;
-      let soon = 0, counting = 0;
-      for (let ch = 1; ch <= 60; ch++) {
-        const info = getChannelData(boss.id, ch);
-        if (!info.killTime) continue;
-        const st = resolveChannelState(info, boss, cdSec, now, getBossCycleMode(boss, ch), getBossManualSince(boss, ch));
-        if (st.cdStart) continue; // 玩家冷卻中不列入
-        const remainSec = (st.kill + minMs - now) / 1000;
-        if (remainSec <= SOON_SEC) soon++; else counting++;
-      }
-      return { soon: soon, counting: counting };
-    }
+    // 各王的紅/綠圓圈小計（由 scanAllBosses 每秒更新）
+    let bossCounts = {};
 
-    // 每秒更新左側列表的紅/綠圓圈（只改數字，不重建列表）
+    // 左側列表的圓圈只改文字與顯示狀態，不重建列表
     function updateSidebarBadges() {
-      const now = Date.now();
       bosses.forEach(boss => {
         const box = document.querySelector(`.boss-badges[data-boss-id="${boss.id}"]`);
         if (!box) return;
-        const c = countBossChannels(boss, now);
+        const c = bossCounts[boss.id] || { soon: 0, counting: 0 };
         const red = box.querySelector('.red');
         const green = box.querySelector('.green');
-        red.textContent = c.soon;
-        green.textContent = c.counting;
+        const rt = String(c.soon), gt = String(c.counting);
+        if (red.textContent !== rt) red.textContent = rt;
+        if (green.textContent !== gt) green.textContent = gt;
         red.classList.toggle('show', c.soon > 0);
         green.classList.toggle('show', c.counting > 0);
       });
@@ -1186,106 +1174,165 @@
     // 通知只在剛跨過門檻的 5 分鐘內發送，避免久未開啟網頁時瞬間洗版
     const NOTIFY_WINDOW_SEC = 300;
 
-    function renderChannels() {
+    // 已處理過的通知代號（附時間戳，定期清除舊的，避免記憶體持續增長）
+    function markNotified(key, fn) {
+      if (notifiedState[key]) return;
+      notifiedState[key] = Date.now();
+      fn();
+    }
+
+    let lastNotifyPrune = 0;
+    function pruneNotified(now) {
+      if (now - lastNotifyPrune < 60 * 1000) return;
+      lastNotifyPrune = now;
+      const cutoff = now - 60 * 60 * 1000;
+      Object.keys(notifiedState).forEach(k => { if (notifiedState[k] < cutoff) delete notifiedState[k]; });
+    }
+
+    function notifyIfNeeded(boss, ch, killTimeNum, elapsedSec) {
+      const minMinSec = boss.minMin * 60;
+      const tag = `${boss.id}_${ch}_${killTimeNum}`;
+      const beforeSec = (boss.minMin - 2) * 60;
+
+      if (discordConfig.before && beforeSec > 0 && elapsedSec >= beforeSec && elapsedSec < minMinSec && elapsedSec < beforeSec + NOTIFY_WINDOW_SEC) {
+        markNotified(`${tag}_before`, () =>
+          sendDiscordMsg(`⏳ **【重生預告】** [${roomId}] ${boss.name} - ${ch} 頻 將在 2 分鐘後可能重生！`, `${tag}_before`));
+      }
+      if (discordConfig.respawn && elapsedSec >= minMinSec && elapsedSec < minMinSec + NOTIFY_WINDOW_SEC) {
+        markNotified(`${tag}_min`, () =>
+          sendDiscordMsg(`⚠ **【可能重生】** [${roomId}] ${boss.name} - ${ch} 頻 已進入可能重生時間區間！`, `${tag}_min`));
+      }
+    }
+
+    // 每秒掃描「所有」Boss 的所有頻道（不論目前顯示哪一頁）：
+    // 統計左側圓圈、並在需要時發送重生預告／重生通知。
+    function scanAllBosses() {
+      const now = Date.now();
+      bosses.forEach(boss => {
+        const cdSec = getBossCdSec(boss.id);
+        const minMinSec = boss.minMin * 60;
+        let soon = 0, counting = 0;
+        for (let ch = 1; ch <= 60; ch++) {
+          const info = getChannelData(boss.id, ch);
+          if (!info.killTime) continue;
+          const st = resolveChannelState(info, boss, cdSec, now, getBossCycleMode(boss, ch), getBossManualSince(boss, ch));
+          if (st.cdStart) continue; // 玩家冷卻中：不列入、不通知
+          const elapsedSec = (now - st.kill) / 1000;
+          if (minMinSec - elapsedSec <= SOON_SEC) soon++; else counting++;
+          notifyIfNeeded(boss, ch, st.kill, elapsedSec);
+        }
+        bossCounts[boss.id] = { soon: soon, counting: counting };
+      });
+      pruneNotified(now);
       updateSidebarBadges();
+    }
+
+    // 每秒執行一次：掃描一定會做（通知不能停），畫面只在分頁可見時才更新
+    function tick() {
+      scanAllBosses();
+      if (!document.hidden) renderChannels();
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) { scanAllBosses(); renderChannels(); }
+    });
+
+    /* ==========================================
+       頻道卡片：每個 Boss 只建立一次 60 張卡片，之後每秒只更新有變化的文字／樣式，
+       不再每秒重建整個畫面（減少 CPU、垃圾回收與記憶體壓力）。
+    ========================================== */
+    let gridBossId = null;
+    let cardRefs = {};
+    let lastOrderKey = '';
+
+    function buildGrid() {
       const grid = document.getElementById('channel-grid');
       grid.innerHTML = '';
+      cardRefs = {};
+      const locked = currentBoss.minMin !== currentBoss.maxMin;
+      const frag = document.createDocumentFragment();
+      const natural = [];
+      for (let ch = 1; ch <= 60; ch++) {
+        natural.push(ch);
+        const card = document.createElement('div');
+        card.className = 'channel-card';
+        card.innerHTML = `
+          <div class="note-badges-container">
+            <div class="note-badge badge-solo" onclick="toggleNote(${ch}, 'solo')" title="獨家發現 (點擊切換)">獨</div>
+            <div class="note-badge badge-steal" onclick="toggleNote(${ch}, 'steal')" title="必須搶奪 (點擊切換)">搶</div>
+          </div>
+          <div class="cycle-badge manual ${locked ? 'locked' : ''}" onclick="toggleChannelCycle(${ch})">手</div>
+          <div class="ch-title">${ch} 頻</div>
+          <div class="ch-status"></div>
+          <div class="ch-estimated-time"></div>
+          <div class="btn-group">
+            <button type="button" class="btn-ch" onclick="handleKillClick(${ch})">擊殺</button>
+            <button type="button" class="btn-ch reset" onclick="resetChannel(${ch})">重置</button>
+          </div>
+        `;
+        cardRefs[ch] = {
+          el: card,
+          solo: card.querySelector('.badge-solo'),
+          steal: card.querySelector('.badge-steal'),
+          cyc: card.querySelector('.cycle-badge'),
+          status: card.querySelector('.ch-status'),
+          est: card.querySelector('.ch-estimated-time'),
+          cls: null, statusText: null, estText: null, soloOn: null, stealOn: null, cycKey: null
+        };
+        frag.appendChild(card);
+      }
+      grid.appendChild(frag);
+      gridBossId = currentBoss.id;
+      lastOrderKey = natural.join(',');
+    }
+
+    function renderChannels() {
+      if (gridBossId !== currentBoss.id) buildGrid();
       const now = Date.now();
       const playerCdSec = getBossCdSec(currentBoss.id);
+      const locked = currentBoss.minMin !== currentBoss.maxMin;
+      const minMin = currentBoss.minMin;
+      const maxMin = currentBoss.maxMin;
+      const minMinSec = minMin * 60;
+      const maxMinSec = maxMin * 60;
 
-      let channelsData = [];
+      const items = [];
       for (let ch = 1; ch <= 60; ch++) {
         const chInfo = getChannelData(currentBoss.id, ch);
+        const cycleMode = getBossCycleMode(currentBoss, ch);
         let remainingMs = Infinity;
-        let killTime = null;
-        let playerCdStartTime = null;
-
-        if (chInfo.killTime) {
-          const st = resolveChannelState(chInfo, currentBoss, playerCdSec, now, getBossCycleMode(currentBoss, ch), getBossManualSince(currentBoss, ch));
-          killTime = st.kill;
-          playerCdStartTime = st.cdStart;
-          remainingMs = (killTime + currentBoss.minMin * 60 * 1000) - now;
-        }
-
-        channelsData.push({ 
-          ch: ch, 
-          killTime: killTime, 
-          isSolo: chInfo.isSolo,
-          isSteal: chInfo.isSteal,
-          playerCdStartTime: playerCdStartTime,
-          cycleMode: getBossCycleMode(currentBoss, ch),
-          remainingMs: remainingMs 
-        });
-      }
-
-      if (sortByTime) {
-        channelsData.sort((a, b) => a.remainingMs - b.remainingMs || a.ch - b.ch);
-      }
-
-      channelsData.forEach(item => {
-        const ch = item.ch;
-        const killTime = item.killTime;
-        const playerCdStartTime = item.playerCdStartTime;
-        const card = document.createElement('div');
-        
         let statusText = '尚未計時';
-        let estimatedText = '&nbsp;';
+        let estimatedText = '\u00a0';
         let cardClass = '';
         let hasTimerClass = '';
 
-        if (killTime) {
-          hasTimerClass = 'has-timer';
-          const killTimeNum = parseInt(killTime);
+        if (chInfo.killTime) {
+          const st = resolveChannelState(chInfo, currentBoss, playerCdSec, now, cycleMode, getBossManualSince(currentBoss, ch));
+          const killTimeNum = st.kill;
           const elapsedSec = (now - killTimeNum) / 1000;
-          const minMin = currentBoss.minMin;
-          const maxMin = currentBoss.maxMin;
-          const minMinSec = minMin * 60;
-          const maxMinSec = maxMin * 60;
+          remainingMs = (killTimeNum + minMin * 60 * 1000) - now;
+          hasTimerClass = 'has-timer';
 
           const estMinDate = new Date(killTimeNum + minMin * 60 * 1000);
-          const estMaxDate = new Date(killTimeNum + maxMin * 60 * 1000);
-
           if (minMin === maxMin) {
             estimatedText = `預計 ${formatTime(estMinDate)}`;
           } else {
-            estimatedText = `預計 ${formatTime(estMinDate)}~${formatTime(estMaxDate)}`;
+            estimatedText = `預計 ${formatTime(estMinDate)}~${formatTime(new Date(killTimeNum + maxMin * 60 * 1000))}`;
           }
 
-          if (playerCdStartTime) {
-            const cdElapsedSec = (now - parseInt(playerCdStartTime)) / 1000;
+          if (st.cdStart) {
+            const cdElapsedSec = (now - parseInt(st.cdStart)) / 1000;
             cardClass = 'player-cd';
-            const leftCdSec = Math.max(0, Math.ceil(playerCdSec - cdElapsedSec));
-            statusText = `冷卻中 ${leftCdSec}s`;
-          } 
-          else {
-            const tag = `${currentBoss.id}_${ch}_${killTimeNum}`;
-
-            const beforeSec = (minMin - 2) * 60;
-            if (discordConfig.before && beforeSec > 0 && elapsedSec >= beforeSec && elapsedSec < minMinSec && elapsedSec < beforeSec + NOTIFY_WINDOW_SEC) {
-              if (!notifiedState[`${tag}_before`]) {
-                sendDiscordMsg(`⏳ **【重生預告】** [${roomId}] ${currentBoss.name} - ${ch} 頻 將在 2 分鐘後可能重生！`, `${tag}_before`);
-                notifiedState[`${tag}_before`] = true;
-              }
-            }
-
-            if (discordConfig.respawn && elapsedSec >= minMinSec && elapsedSec < minMinSec + NOTIFY_WINDOW_SEC) {
-              if (!notifiedState[`${tag}_min`]) {
-                sendDiscordMsg(`⚠ **【可能重生】** [${roomId}] ${currentBoss.name} - ${ch} 頻 已進入可能重生時間區間！`, `${tag}_min`);
-                notifiedState[`${tag}_min`] = true;
-              }
-            }
-
-            // 與左側列表相同的「即將重生」判斷（SOON_SEC）：距離最早重生 2 分鐘內或已到重生時間
-            if (minMinSec - elapsedSec <= SOON_SEC) {
-              hasTimerClass += ' soon';
-            }
+            statusText = `冷卻中 ${Math.max(0, Math.ceil(playerCdSec - cdElapsedSec))}s`;
+          } else {
+            // 與左側列表相同的「即將重生」判斷（SOON_SEC）
+            if (minMinSec - elapsedSec <= SOON_SEC) hasTimerClass += ' soon';
 
             if (elapsedSec < minMinSec) {
               cardClass = 'counting';
               const leftSec = Math.floor(minMinSec - elapsedSec);
               const m = Math.floor(leftSec / 60);
-              const s = leftSec % 60;
-              statusText = `${m}分${s < 10 ? '0' : ''}${s}秒`;
+              const sec = leftSec % 60;
+              statusText = `${m}分${sec < 10 ? '0' : ''}${sec}秒`;
             } else {
               cardClass = 'maybe';
               // 手動巡迴：停在此狀態直到按下「擊殺」
@@ -1294,30 +1341,41 @@
           }
         }
 
-        card.className = `channel-card ${cardClass} ${hasTimerClass}`;
-        card.innerHTML = `
-          <div class="note-badges-container">
-            <div class="note-badge badge-solo ${item.isSolo ? 'active' : ''}" 
-                 onclick="toggleNote(${ch}, 'solo')" 
-                 title="獨家發現 (點擊切換)">獨</div>
-            <div class="note-badge badge-steal ${item.isSteal ? 'active' : ''}" 
-                 onclick="toggleNote(${ch}, 'steal')" 
-                 title="必須搶奪 (點擊切換)">搶</div>
-          </div>
+        items.push({
+          ch: ch, remainingMs: remainingMs, statusText: statusText, estimatedText: estimatedText,
+          cls: `channel-card ${cardClass} ${hasTimerClass}`.replace(/\s+/g, ' ').trim(),
+          isSolo: chInfo.isSolo, isSteal: chInfo.isSteal, cycleMode: cycleMode
+        });
+      }
 
-          <div class="cycle-badge ${item.cycleMode === 'auto' ? 'auto' : 'manual'} ${currentBoss.minMin !== currentBoss.maxMin ? 'locked' : ''}"
-               onclick="toggleChannelCycle(${ch})"
-               title="${item.cycleMode === 'auto' ? '自動巡迴（點擊切換為手動）' : (currentBoss.minMin !== currentBoss.maxMin ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）')}">${item.cycleMode === 'auto' ? '自' : '手'}</div>
+      if (sortByTime) {
+        items.sort((a, b) => a.remainingMs - b.remainingMs || a.ch - b.ch);
+      }
 
-          <div class="ch-title">${ch} 頻</div>
-          <div class="ch-status">${statusText}</div>
-          <div class="ch-estimated-time">${estimatedText}</div>
-          <div class="btn-group">
-            <button type="button" class="btn-ch" onclick="handleKillClick(${ch})">擊殺</button>
-            <button type="button" class="btn-ch reset" onclick="resetChannel(${ch})">重置</button>
-          </div>
-        `;
-        grid.appendChild(card);
+      // 順序有變才重新排列 DOM
+      const orderKey = items.map(i => i.ch).join(',');
+      if (orderKey !== lastOrderKey) {
+        const grid = document.getElementById('channel-grid');
+        items.forEach(i => grid.appendChild(cardRefs[i.ch].el));
+        lastOrderKey = orderKey;
+      }
+
+      // 只更新有變化的部分
+      items.forEach(item => {
+        const r = cardRefs[item.ch];
+        if (r.cls !== item.cls) { r.el.className = item.cls; r.cls = item.cls; }
+        if (r.statusText !== item.statusText) { r.status.textContent = item.statusText; r.statusText = item.statusText; }
+        if (r.estText !== item.estimatedText) { r.est.textContent = item.estimatedText; r.estText = item.estimatedText; }
+        if (r.soloOn !== item.isSolo) { r.solo.classList.toggle('active', item.isSolo); r.soloOn = item.isSolo; }
+        if (r.stealOn !== item.isSteal) { r.steal.classList.toggle('active', item.isSteal); r.stealOn = item.isSteal; }
+        const cycKey = item.cycleMode + (locked ? 'L' : '');
+        if (r.cycKey !== cycKey) {
+          const isAuto = item.cycleMode === 'auto';
+          r.cyc.className = `cycle-badge ${isAuto ? 'auto' : 'manual'} ${locked ? 'locked' : ''}`;
+          r.cyc.textContent = isAuto ? '自' : '手';
+          r.cyc.title = isAuto ? '自動巡迴（點擊切換為手動）' : (locked ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）');
+          r.cycKey = cycKey;
+        }
       });
     }
 
@@ -1417,7 +1475,7 @@
     updateDiscordToggleBtn();
     initVersionCheck();
     listenToFirebase();
-    setInterval(renderChannels, 1000);
+    setInterval(tick, 1000);
     selectBoss(bosses[0]);
   </script>
 </body>
