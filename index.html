@@ -766,33 +766,33 @@
     }
 
     // 全體切換：一次設定這隻王所有頻道（同時清除個別頻道的設定）
-    function setBossCycleMode(mode) {
+    function setBossCycleMode(mode, boss = currentBoss, skipConfirm = false) {
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
-      if (mode === 'auto' && currentBoss.minMin !== currentBoss.maxMin) {
+      if (mode === 'auto' && boss.minMin !== boss.maxMin) {
         alert("重生時間最大與最小不同的王，只能使用手動巡迴！");
         return;
       }
-      if (getBossAllMode(currentBoss) === mode) return; // 已全體為該模式，避免重設切換時間
+      if (getBossAllMode(boss) === mode) return; // 已全體為該模式，避免重設切換時間
       const label = mode === 'auto' ? '全體自動巡迴' : '全體手動巡迴';
-      if (!confirm(`確定將【${currentBoss.name}】的所有頻道切換為「${label}」嗎？`)) return;
-      const value = (mode === 'manual' && currentBoss.minMin === currentBoss.maxMin)
+      if (!skipConfirm && !confirm(`確定將【${boss.name}】的所有頻道切換為「${label}」嗎？`)) return;
+      const value = (mode === 'manual' && boss.minMin === boss.maxMin)
         ? { mode: 'manual', since: Date.now() }
         : { mode: mode };
-      db.ref(`rooms/${roomId}/bossCycleSettings/${currentBoss.id}`).set(value).catch(() => {
+      db.ref(`rooms/${roomId}/bossCycleSettings/${boss.id}`).set(value).catch(() => {
         alert("寫入資料庫失敗，請重試！");
       });
     }
 
     // 單一頻道切換（點卡片左側的「自／手」圓圈）
-    function toggleChannelCycle(ch) {
+    function toggleChannelCycle(ch, boss = currentBoss) {
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
-      if (currentBoss.minMin !== currentBoss.maxMin) {
+      if (boss.minMin !== boss.maxMin) {
         alert("重生時間為區間的王，只能使用手動巡迴！");
         return;
       }
-      const next = getBossCycleMode(currentBoss, ch) === 'auto' ? 'manual' : 'auto';
+      const next = getBossCycleMode(boss, ch) === 'auto' ? 'manual' : 'auto';
       const value = next === 'manual' ? { mode: 'manual', since: Date.now() } : { mode: 'auto' };
-      db.ref(`rooms/${roomId}/bossCycleSettings/${currentBoss.id}/ch${ch}`).set(value).catch(() => {
+      db.ref(`rooms/${roomId}/bossCycleSettings/${boss.id}/ch${ch}`).set(value).catch(() => {
         alert("寫入資料庫失敗，請重試！");
       });
     }
@@ -1392,28 +1392,52 @@
     let popBoss = null;
     let popSig = null;
     let popTimer = null;
+    let popFlash = null;
+    let popCdEls = {};
 
     const POPOUT_CSS = `
       *{box-sizing:border-box}
       html,body{margin:0;height:100%}
-      body{display:flex;flex-direction:column;background:#fff8eb;color:#3a3226;font-family:"Microsoft JhengHei","PingFang TC",sans-serif;font-size:13px}
-      .hd{flex:0 0 26px;display:flex;align-items:center;padding:0 8px;background:#5c4327;color:#fff;font-weight:bold;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .add{flex:0 0 34px;display:flex;gap:6px;padding:4px 6px;border-bottom:1px solid #dcd4c3}
-      .add input{width:70px;padding:0 6px;border:1px solid #bbb;border-radius:4px;font-size:14px}
-      .add button,.row button{border:0;border-radius:4px;background:#4caf50;color:#fff;font-weight:bold;cursor:pointer}
-      .row button.rs{background:#9e9e9e}
-      .row button.rs.arm{background:#e02424}
-      .add button{flex:1;font-size:14px}
-      .list{flex:1;overflow-y:auto;padding:3px 6px}
-      .row{display:flex;align-items:center;gap:5px;height:28px;margin-bottom:3px;padding:0 4px 0 6px;background:#fff;border:1px solid #ddd;border-left:5px solid #16a34a;border-radius:4px}
-      .row.soon{border-left-color:#e02424;background:#fff1f1}
-      .row.cd{border-left-color:#1abc9c}
-      .row .c{flex:0 0 38px;font-weight:bold}
-      .row .t{flex:0 0 36px;font-size:11px;color:#8a7d66;font-variant-numeric:tabular-nums}
-      .row .cd{flex:1;min-width:0;font-size:15px;font-weight:bold;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+      body{display:flex;flex-direction:column;background:#f4eee0;color:#3a3226;font-family:"Microsoft JhengHei","PingFang TC",sans-serif;font-size:12px;user-select:none}
+      button{font-family:inherit}
+      .hd{flex:0 0 30px;display:flex;align-items:center;gap:6px;padding:0 8px;background:linear-gradient(135deg,#5c4327,#7d5c36);color:#fff}
+      .hd .nm{flex:1;min-width:0;font-size:14px;font-weight:bold;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .seg{display:flex;border-radius:5px;overflow:hidden;background:rgba(255,255,255,.16)}
+      .seg button{border:0;background:transparent;color:#f3e9d6;font-size:11px;padding:4px 8px;cursor:pointer;transition:background .15s}
+      .seg button+button{border-left:1px solid rgba(255,255,255,.2)}
+      .seg button:hover:not(:disabled):not(.on){background:rgba(255,255,255,.18)}
+      .seg button.on{background:#f3c969;color:#4a3519;font-weight:bold}
+      .seg button.arm{background:#e02424;color:#fff;font-weight:bold}
+      .seg button:disabled{opacity:.4;cursor:not-allowed}
+      .add{flex:0 0 38px;display:flex;gap:6px;padding:5px 7px;background:#ebe3d0;border-bottom:1px solid #d8cdb2}
+      .add input{width:74px;padding:0 8px;border:1px solid #cdbf9f;border-radius:6px;background:#fff;font-size:14px;font-family:inherit;user-select:text;outline:none}
+      .add input:focus{border-color:#b8986c;box-shadow:0 0 0 2px rgba(184,152,108,.3)}
+      .add button{flex:1;border:0;border-radius:6px;background:linear-gradient(#58b85c,#3f9d44);color:#fff;font-size:14px;font-weight:bold;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+      .add button:active,.row .kill:active{transform:scale(.96)}
+      .list{flex:1;overflow-y:auto;padding:5px 7px 2px}
+      .list::-webkit-scrollbar{width:6px}
+      .list::-webkit-scrollbar-thumb{background:#cbbf9f;border-radius:3px}
+      .row{display:flex;align-items:center;gap:5px;height:27px;margin-bottom:4px;padding:0 4px 0 5px;background:#fff;border:1px solid #e4dccb;border-left:4px solid #16a34a;border-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+      .row.soon{border-left-color:#e02424;background:#fff4f2}
+      .row.cd{border-left-color:#1abc9c;background:#effaf7}
+      .row.flash{animation:fl .7s ease-out}
+      @keyframes fl{0%{box-shadow:0 0 0 3px rgba(76,175,80,.8)}100%{box-shadow:0 0 0 0 rgba(76,175,80,0)}}
+      .mode{flex:0 0 17px;height:17px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:#fff;cursor:pointer;transition:transform .12s}
+      .mode:hover:not(.locked){transform:scale(1.18)}
+      .mode.auto{background:#4a6278}
+      .mode.manual{background:#e67e22}
+      .mode.locked{opacity:.5;cursor:not-allowed}
+      .row .c{flex:0 0 33px;font-weight:bold;font-size:12px}
+      .row .t{flex:0 0 33px;font-size:10px;color:#8a7d66;font-variant-numeric:tabular-nums}
+      .row .cd{flex:1;min-width:0;text-align:right;font-size:15px;font-weight:bold;white-space:nowrap;font-variant-numeric:tabular-nums;color:#2d6a31}
       .row.soon .cd{color:#c0392b}
-      .row button{flex:0 0 40px;height:22px;font-size:12px}
-      .empty{padding:14px 4px;color:#8a7d66;text-align:center}
+      .row.cd .cd{color:#14917a}
+      .row button{flex:0 0 38px;height:21px;border:0;border-radius:5px;font-size:11px;font-weight:bold;cursor:pointer;transition:transform .08s,background .15s}
+      .row .kill{background:linear-gradient(#58b85c,#3f9d44);color:#fff}
+      .row .rs{background:#ece6d6;color:#6b5f4c}
+      .row .rs:hover{background:#ddd3bb}
+      .row .rs.arm{background:#e02424;color:#fff}
+      .empty{padding:18px 6px;color:#9a8d73;text-align:center;line-height:1.7}
     `;
 
     function computePopoutRows(boss, now) {
@@ -1424,7 +1448,8 @@
       for (let ch = 1; ch <= 60; ch++) {
         const info = getChannelData(boss.id, ch);
         if (!info.killTime) continue;
-        const st = resolveChannelState(info, boss, cdSec, now, getBossCycleMode(boss, ch), getBossManualSince(boss, ch));
+        const mode = getBossCycleMode(boss, ch);
+        const st = resolveChannelState(info, boss, cdSec, now, mode, getBossManualSince(boss, ch));
         const remainMs = st.kill + minMs - now;
 
         // 倒數文字（精確到秒），規則與主視窗卡片一致
@@ -1441,6 +1466,7 @@
 
         rows.push({
           ch: ch,
+          mode: mode,
           remainMs: remainMs,
           time: formatTime(new Date(st.kill + minMs)),
           text: text,
@@ -1451,21 +1477,44 @@
       return rows;
     }
 
+    // 標題列的「全自動／全手動」按鈕狀態（60 個頻道全部相同才會亮起）
+    function updatePopSeg() {
+      const d = popWin.document;
+      const a = d.getElementById('pa'), m = d.getElementById('pm');
+      if (!a || !m) return;
+      const all = getBossAllMode(popBoss);
+      const canAuto = popBoss.minMin === popBoss.maxMin;
+      a.classList.toggle('on', all === 'auto');
+      m.classList.toggle('on', all === 'manual');
+      a.disabled = !canAuto;
+      a.title = canAuto ? '將此王所有頻道切換為自動巡迴（點兩下確認）' : '重生時間為區間的王只能手動巡迴';
+      m.title = '將此王所有頻道切換為手動巡迴（點兩下確認）';
+    }
+
     // 與主視窗同步：資料更新時、每秒都會呼叫。
-    // 列表結構（頻道、順序、顏色）有變才重畫；平常每秒只更新倒數文字。
-    let popCdEls = {};
+    // 列表結構（頻道、順序、顏色、巡迴模式）有變才重畫；平常每秒只更新倒數文字。
     function updatePopout() {
       if (!popWin) return;
       if (popWin.closed) { cleanupPopout(); return; }
       const list = popWin.document.getElementById('pl');
       if (!list) return;
+      const locked = popBoss.minMin !== popBoss.maxMin;
       const rows = computePopoutRows(popBoss, Date.now());
-      const sig = rows.map(r => `${r.ch}|${r.time}|${r.cls}`).join(',');
+      const sig = rows.map(r => `${r.ch}|${r.time}|${r.cls}|${r.mode}`).join(',');
       if (sig !== popSig) {
         popSig = sig;
         list.innerHTML = rows.length
-          ? rows.map(r => `<div class="row ${r.cls}"><span class="c">${r.ch} 頻</span><span class="t">${r.time}</span><span class="cd" data-ch="${r.ch}"></span><button type="button" data-act="kill" data-ch="${r.ch}">擊殺</button><button type="button" class="rs" data-act="reset" data-ch="${r.ch}">重置</button></div>`).join('')
-          : '<div class="empty">尚無計時中的頻道，請由上方輸入頻道按擊殺</div>';
+          ? rows.map(r => {
+              const isAuto = r.mode === 'auto';
+              const tip = isAuto ? '自動巡迴（點擊切換為手動）' : (locked ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）');
+              return `<div class="row ${r.cls}${popFlash === r.ch ? ' flash' : ''}">`
+                + `<span class="mode ${isAuto ? 'auto' : 'manual'}${locked ? ' locked' : ''}" data-act="cycle" data-ch="${r.ch}" title="${tip}">${isAuto ? '自' : '手'}</span>`
+                + `<span class="c">${r.ch} 頻</span><span class="t">${r.time}</span><span class="cd" data-ch="${r.ch}"></span>`
+                + `<button type="button" class="kill" data-act="kill" data-ch="${r.ch}">擊殺</button>`
+                + `<button type="button" class="rs" data-act="reset" data-ch="${r.ch}">重置</button></div>`;
+            }).join('')
+          : '<div class="empty">目前沒有計時中的頻道<br>在上方輸入頻道號碼，按「擊殺」開始計時</div>';
+        popFlash = null;
         popCdEls = {};
         list.querySelectorAll('.cd[data-ch]').forEach(el => { popCdEls[el.dataset.ch] = el; });
       }
@@ -1473,11 +1522,13 @@
         const el = popCdEls[r.ch];
         if (el && el.textContent !== r.text) el.textContent = r.text;
       });
+      updatePopSeg();
     }
 
     function popKill(ch) {
       if (!popBoss || !(ch >= 1 && ch <= 60)) return;
       recordKill(ch, Date.now(), false, popBoss);
+      popFlash = ch; // 擊殺後該列短暫閃一下綠光
       popSig = null; // 立即重畫
       updatePopout();
     }
@@ -1489,12 +1540,39 @@
       updatePopout();
     }
 
+    function popCycle(ch) {
+      if (!popBoss || popBoss.minMin !== popBoss.maxMin) return; // 區間王只能手動，不可切換
+      toggleChannelCycle(ch, popBoss);
+    }
+
+    // 兩段式確認：第一下變成紅色「確定?」，2.5 秒內再按一次才執行（小視窗按鈕小，避免誤觸）
+    function armClick(w, btn, label, onConfirm) {
+      if (btn.dataset.armed === '1') {
+        btn.dataset.armed = '';
+        btn.classList.remove('arm');
+        btn.textContent = label;
+        onConfirm();
+        return;
+      }
+      btn.dataset.armed = '1';
+      btn.classList.add('arm');
+      btn.textContent = '確定?';
+      w.setTimeout(() => {
+        if (btn.isConnected && btn.dataset.armed === '1') {
+          btn.dataset.armed = '';
+          btn.classList.remove('arm');
+          btn.textContent = label;
+        }
+      }, 2500);
+    }
+
     function cleanupPopout() {
       if (popTimer && popWin) { try { popWin.clearInterval(popTimer); } catch (e) {} }
       popTimer = null;
       popWin = null;
       popBoss = null;
       popSig = null;
+      popFlash = null;
     }
 
     function closePopout() {
@@ -1509,7 +1587,9 @@
       style.textContent = POPOUT_CSS;
       doc.head.appendChild(style);
       doc.body.innerHTML = `
-        <div class="hd" id="ph"></div>
+        <div class="hd"><span class="nm" id="ph"></span>
+          <div class="seg"><button type="button" id="pa">全自動</button><button type="button" id="pm">全手動</button></div>
+        </div>
         <div class="add"><input id="pch" type="number" min="1" max="60" placeholder="頻道"><button type="button" id="pk">擊殺</button></div>
         <div class="list" id="pl"></div>`;
       doc.getElementById('ph').textContent = popBoss.name;
@@ -1524,23 +1604,23 @@
       };
       doc.getElementById('pk').addEventListener('click', addKill);
       input.addEventListener('keydown', e => { if (e.key === 'Enter') addKill(); });
+
+      // 全體切換（兩段式確認）
+      const pa = doc.getElementById('pa'), pm = doc.getElementById('pm');
+      const segClick = (btn, mode, label) => {
+        if (btn.disabled || getBossAllMode(popBoss) === mode) return;
+        armClick(w, btn, label, () => setBossCycleMode(mode, popBoss, true));
+      };
+      pa.addEventListener('click', () => segClick(pa, 'auto', '全自動'));
+      pm.addEventListener('click', () => segClick(pm, 'manual', '全手動'));
+
       doc.getElementById('pl').addEventListener('click', e => {
-        const btn = e.target.closest('button[data-ch]');
-        if (!btn) return;
-        const ch = parseInt(btn.dataset.ch, 10);
-        if (btn.dataset.act === 'kill') { popKill(ch); return; }
-        // 重置：小視窗按鈕很小，避免誤觸 → 第一下變成「確定?」，2.5 秒內再按一次才真的重置
-        if (btn.dataset.armed === '1') { popReset(ch); return; }
-        btn.dataset.armed = '1';
-        btn.classList.add('arm');
-        btn.textContent = '確定?';
-        w.setTimeout(() => {
-          if (btn.isConnected && btn.dataset.armed === '1') {
-            btn.dataset.armed = '';
-            btn.classList.remove('arm');
-            btn.textContent = '重置';
-          }
-        }, 2500);
+        const el = e.target.closest('[data-act]');
+        if (!el) return;
+        const ch = parseInt(el.dataset.ch, 10);
+        if (el.dataset.act === 'kill') popKill(ch);
+        else if (el.dataset.act === 'cycle') popCycle(ch);
+        else if (el.dataset.act === 'reset') armClick(w, el, '重置', () => popReset(ch));
       });
 
       w.addEventListener('pagehide', cleanupPopout);
