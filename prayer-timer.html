@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>楓之谷祈禱提醒</title>
+<style>
+:root{--bg:#f4f1ea;--card:#fffdf8;--ink:#2b2a26;--mut:#7a766b;--line:#e2dccd;--acc:#2f7d6d;--warn:#d6452f;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1d1c;--card:#242726;--ink:#ece8dd;--mut:#9a968a;--line:#3a3e3c;--acc:#4fb39f;--warn:#ff6b52}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif}
+#app{max-width:300px;margin:12px auto;padding:0 12px}
+.mini{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:3px 6px 4px;text-align:center;cursor:pointer;user-select:none}
+.t{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2;flex:1;min-width:34px}
+.s{font-size:10px;color:var(--mut);white-space:nowrap;line-height:1.3}
+.bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin:2px 0}
+.f{height:100%;width:0;background:var(--acc)}
+.r{display:flex;align-items:center;gap:2px}
+.mini button{flex:none;width:18px;height:20px;padding:0;font-size:11px;line-height:1;border-radius:4px;touch-action:none}
+.pip .s{display:none}
+.pip .mini{padding:5px 8px 6px;border-radius:14px;background:linear-gradient(160deg,var(--card),var(--bg));box-shadow:0 1px 6px rgba(0,0,0,.12)}
+.pip .r{gap:5px}
+.pip .bar{height:4px;margin:5px 0 0;border-radius:3px}
+.pip .mini button{width:28px;height:28px;font-size:14px;border-radius:50%}
+.pip .t{font-size:24px;font-weight:800;letter-spacing:.5px}
+
+
+.mini.alert{border-color:var(--warn);animation:fl .6s infinite alternate}
+.mini.alert .t,.mini.alert .s{color:var(--warn)}
+@keyframes fl{to{box-shadow:0 0 0 2px var(--warn)}}
+#set{margin-top:12px;font-size:13px;color:var(--mut)}
+#set label{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+input[type=number]{width:70px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit}
+.row{display:flex;gap:8px;margin-top:10px}
+.row button{flex:1;padding:8px 6px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:13px;cursor:pointer}
+.mini button{border:1px solid var(--line);background:var(--card);color:var(--ink);font-family:inherit;cursor:pointer;transition:transform .08s,filter .15s}
+.mini button:hover{filter:brightness(1.08)}
+.mini button:active{transform:scale(.9)}
+.mini button[data-a="s"]{background:var(--acc);border-color:var(--acc);color:#fff;margin-left:4px}
+.mini button[data-a="x"]{color:var(--warn);border-color:var(--warn)}
+.f{transition:width .2s linear,background .3s}
+.mini.alert .f{background:var(--warn)}
+.hint{margin-top:10px;font-size:12px;line-height:1.5}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="mini" id="mini"></div>
+  <div id="set">
+    <label>Buff 時間（秒）<input type="number" id="dur" min="10" max="3600" value="118"></label>
+    <label>剩幾秒時提醒<input type="number" id="rem" min="0" max="3600" value="8"></label>
+    <label>＋／－ 每次調整（秒）<input type="number" id="step" min="1" max="60" value="1"></label>
+    <label>時間到自動重新計時<input type="checkbox" id="auto" checked></label>
+    <div class="row"><button id="test">測試語音</button><button id="pip">懸浮小視窗</button></div>
+    <div class="hint">▶ 開始／已吸 Buff 重新計時，■ 停止，按住 －／＋ 可連續增減剩餘秒數。點時間處或按空白鍵＝開始／重新計時。提醒時會唸「剩餘 X 秒鐘」。</div>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const MINI='<div class="r"><button data-a="m" title="減少剩餘時間（可按住）">−</button><div class="t"></div><button data-a="p" title="增加剩餘時間（可按住）">＋</button><button data-a="s" title="開始／已吸 Buff 重新計時">▶</button><button data-a="x" title="停止">■</button></div><div class="bar"><div class="f"></div></div><div class="s"></div>';
+let ctx=null,end=0,total=118,timer=null,tw=window,W=window,alerted=false,spoken=false,nodes=[],running=false,lastGo=0,holdT=null,holdI=null,hw=null;
+const views=[];
+function mk(box){const v={box,t:box.querySelector('.t'),f:box.querySelector('.f'),s:box.querySelector('.s')};views.push(v);return v}
+$('mini').innerHTML=MINI;mk($('mini'));
+const paint=fn=>views.forEach(fn);
+try{const s=JSON.parse(localStorage.getItem('prayer4')||'{}');if(s.dur)$('dur').value=s.dur;if(s.rem!=null)$('rem').value=s.rem;if(s.step)$('step').value=s.step;if(s.auto!=null)$('auto').checked=s.auto}catch(e){}
+function save(){try{localStorage.setItem('prayer4',JSON.stringify({dur:$('dur').value,rem:$('rem').value,step:$('step').value,auto:$('auto').checked}))}catch(e){}}
+function fmt(s){s=Math.max(0,Math.ceil(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
+function audio(){if(!ctx)ctx=new (window.AudioContext||window.webkitAudioContext)();if(ctx.state==='suspended')ctx.resume();return ctx}
+function speak(t){
+  try{if(!('speechSynthesis' in window))return;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='zh-TW';u.rate=1.05;speechSynthesis.speak(u)}catch(e){}
+}
+function remText(){const r=Math.max(0,+$('rem').value||0);return r>0?'剩餘'+r+'秒鐘':'時間到'}
+function say(){if(spoken)return;spoken=true;speak(remText())}
+function sched(at,fn){
+  const c=audio(),o=c.createOscillator(),g=c.createGain();g.gain.value=0;
+  o.connect(g).connect(c.destination);o.onended=fn;o.start();o.stop(c.currentTime+Math.max(0.01,at));nodes.push(o);
+}
+function clearNodes(){nodes.forEach(n=>{n.onended=null;try{n.stop()}catch(e){}try{n.disconnect()}catch(e){}});nodes=[]}
+function clearSched(){clearNodes();try{speechSynthesis.cancel()}catch(e){}}
+function schedAll(){
+  clearNodes();
+  const left=(end-Date.now())/1000,rem=Math.min(left,+$('rem').value||0);
+  try{audio();if(!spoken)sched(Math.max(0.01,left-rem),say);sched(left,()=>{if($('auto').checked)start()})}catch(e){}
+}
+function stopTicker(){try{tw.clearInterval(timer)}catch(e){}}
+function setTicker(){stopTicker();tw=W;timer=W.setInterval(tick,200)}
+function start(){
+  save();
+  total=Math.max(10,+$('dur').value||118);
+  clearSched();
+  end=Date.now()+total*1000;alerted=false;spoken=false;running=true;
+  paint(v=>v.box.classList.remove('alert'));document.title='楓之谷祈禱提醒';
+  schedAll();setTicker();tick();
+}
+function go(){const n=Date.now();if(n-lastGo<300)return;lastGo=n;start()}
+function stop(){reset();paint(v=>v.s.textContent='已停止，按▶開始')}
+// quiet=true：按住連續調整時先不重排音訊，放開後才排一次
+function adjust(d,quiet){
+  if(!running)return;
+  const left=Math.max(1,(end-Date.now())/1000+d);
+  end=Date.now()+left*1000;total=Math.max(total,left);
+  if(alerted&&left>(+$('rem').value||0)){alerted=false;spoken=false;paint(v=>v.box.classList.remove('alert'))}
+  if(!quiet)schedAll();
+  tick();
+}
+// 按住 －／＋：先立即調整一次，0.4 秒後開始連續調整，按越久越快
+function holdStart(sign){
+  holdStop();
+  const st=Math.max(1,+$('step').value||1);let n=0;hw=W;
+  adjust(sign*st,true);
+  holdT=hw.setTimeout(()=>{holdI=hw.setInterval(()=>{n++;adjust(sign*st*(n>20?5:1),true)},90)},400);
+}
+function holdStop(){
+  const was=holdT!==null||holdI!==null;
+  try{if(hw){hw.clearTimeout(holdT);hw.clearInterval(holdI)}}catch(e){}
+  holdT=holdI=null;
+  if(was&&running)schedAll();
+}
+function bindStop(w){
+  ['pointerup','pointercancel'].forEach(ev=>w.document.addEventListener(ev,holdStop));
+  w.addEventListener('blur',holdStop);
+  w.document.documentElement.addEventListener('pointerleave',holdStop);
+}
+function tick(){
+  const left=(end-Date.now())/1000,rem=+$('rem').value||0;
+  if(left<=-0.5&&$('auto').checked){start();return}
+  if(left<=rem&&!alerted){alerted=true;paint(v=>v.box.classList.add('alert'));document.title='⚠ 該吸祈禱囉';say()}
+  const txt=(left<=0&&!$('auto').checked)?'已結束，按▶重計':(alerted?'該吸了！吸完按▶重計':'倒數中');
+  paint(v=>{v.t.textContent=fmt(left);v.f.style.width=Math.max(0,left/total*100)+'%';v.s.textContent=txt});
+  if(left<=0&&!$('auto').checked){stopTicker();running=false}
+}
+function reset(){
+  stopTicker();clearSched();running=false;alerted=false;
+  document.title='楓之谷祈禱提醒';
+  paint(v=>{v.box.classList.remove('alert');v.t.textContent=fmt(+$('dur').value||118);v.f.style.width='0';v.s.textContent='按▶開始'});
+}
+function tap(e){
+  const b=e.target.closest&&e.target.closest('button');
+  try{
+    if(!b){go();return}
+    const a=b.dataset.a;
+    if(a==='s')go();else if(a==='x')stop();else if(a==='m')holdStart(-1);else if(a==='p')holdStart(1);
+  }catch(err){paint(v=>{v.s.textContent='錯誤：'+err.message;v.t.textContent='錯誤';v.t.title=err.message})}
+}
+$('mini').addEventListener('pointerdown',tap);
+bindStop(window);
+$('test').onclick=()=>{try{audio()}catch(e){}speak(remText())};
+$('dur').onchange=()=>{save();if(!running)reset()};
+$('rem').onchange=save;$('step').onchange=save;$('auto').onchange=save;
+document.addEventListener('keydown',e=>{if(e.code==='Space'&&e.target.tagName!=='INPUT'){e.preventDefault();go()}});
+// 在另一個視窗（置頂小視窗或一般彈出視窗）內重新建立一份小計時器
+function attachFloat(w,cls){
+  const d=w.document;
+  d.head.append(document.querySelector('style').cloneNode(true));
+  d.title='楓之谷祈禱';
+  d.body.innerHTML='';d.body.className=cls;d.body.style.cssText='margin:0;padding:2px';
+  const box=d.createElement('div');box.className='mini';box.innerHTML=MINI;
+  d.body.append(box);
+  const v=mk(box),m=views[0];
+  v.t.textContent=m.t.textContent;v.f.style.width=m.f.style.width;v.s.textContent=m.s.textContent;
+  if(alerted)box.classList.add('alert');
+  d.addEventListener('pointerdown',tap);
+  d.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();go()}});
+  bindStop(w);
+  W=w;if(running)setTicker();
+  w.addEventListener('pagehide',()=>{holdStop();const i=views.indexOf(v);if(i>0)views.splice(i,1);W=window;if(running)setTicker()});
+}
+$('pip').onclick=async()=>{
+  if(!window.documentPictureInPicture){alert('此瀏覽器不支援置頂懸浮視窗，請改用 Chrome 或 Edge。');return}
+  try{
+    const w=await documentPictureInPicture.requestWindow({width:240,height:58});
+    attachFloat(w,'pip');
+    try{w.resizeTo(240,58)}catch(e){}
+  }catch(e){alert('無法開啟懸浮視窗：'+e.message)}
+};
+
+reset();
+</script>
+</body>
+</html>
