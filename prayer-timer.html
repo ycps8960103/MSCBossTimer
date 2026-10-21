@@ -40,6 +40,14 @@ input[type=number]{width:70px;padding:4px 6px;border-radius:6px;border:1px solid
 .mini button[data-a="x"]{color:var(--warn);border-color:var(--warn)}
 .f{transition:width .2s linear,background .3s}
 .mini.alert .f{background:var(--warn)}
+@keyframes redglow{from{background:#ff3b2f}to{background:#5c0d07}}
+body.pip{background:transparent}
+html:has(body.pip .mini.alert){animation:redglow .45s infinite alternate}
+.pip .mini.alert{background:transparent;border-color:transparent;box-shadow:none;animation:none}
+.pip .mini.alert .t,.pip .mini.alert .s{color:#fff}
+.pip .mini.alert .bar{background:rgba(255,255,255,.3)}
+.pip .mini.alert .f{background:#fff}
+.pip .mini.alert button[data-a="x"]{color:#fff;border-color:#fff}
 .hint{margin-top:10px;font-size:12px;line-height:1.5}
 </style>
 </head>
@@ -47,7 +55,7 @@ input[type=number]{width:70px;padding:4px 6px;border-radius:6px;border:1px solid
 <div id="app">
   <div class="mini" id="mini"></div>
   <div id="set">
-    <label>Buff 時間（秒）<input type="number" id="dur" min="10" max="3600" value="118"></label>
+    <label>Buff 時間（秒）<input type="number" id="dur" min="10" max="3600" step="0.1" value="117.5"></label>
     <label>剩幾秒時提醒<input type="number" id="rem" min="0" max="3600" value="8"></label>
     <label>＋／－ 每次調整（秒）<input type="number" id="step" min="1" max="60" value="1"></label>
     <label>時間到自動重新計時<input type="checkbox" id="auto" checked></label>
@@ -58,13 +66,13 @@ input[type=number]{width:70px;padding:4px 6px;border-radius:6px;border:1px solid
 <script>
 const $=id=>document.getElementById(id);
 const MINI='<div class="r"><button data-a="m" title="減少剩餘時間（可按住）">−</button><div class="t"></div><button data-a="p" title="增加剩餘時間（可按住）">＋</button><button data-a="s" title="開始／已吸 Buff 重新計時">▶</button><button data-a="x" title="停止">■</button></div><div class="bar"><div class="f"></div></div><div class="s"></div>';
-let ctx=null,end=0,total=118,timer=null,tw=window,W=window,alerted=false,spoken=false,nodes=[],running=false,lastGo=0,holdT=null,holdI=null,hw=null;
+let ctx=null,end=0,total=117.5,timer=null,tw=window,W=window,alerted=false,spoken=false,nodes=[],running=false,lastGo=0,holdT=null,holdI=null,hw=null;
 const views=[];
 function mk(box){const v={box,t:box.querySelector('.t'),f:box.querySelector('.f'),s:box.querySelector('.s')};views.push(v);return v}
 $('mini').innerHTML=MINI;mk($('mini'));
 const paint=fn=>views.forEach(fn);
-try{const s=JSON.parse(localStorage.getItem('prayer4')||'{}');if(s.dur)$('dur').value=s.dur;if(s.rem!=null)$('rem').value=s.rem;if(s.step)$('step').value=s.step;if(s.auto!=null)$('auto').checked=s.auto}catch(e){}
-function save(){try{localStorage.setItem('prayer4',JSON.stringify({dur:$('dur').value,rem:$('rem').value,step:$('step').value,auto:$('auto').checked}))}catch(e){}}
+try{const s=JSON.parse(localStorage.getItem('prayer5')||'{}');if(s.dur)$('dur').value=s.dur;if(s.rem!=null)$('rem').value=s.rem;if(s.step)$('step').value=s.step;if(s.auto!=null)$('auto').checked=s.auto}catch(e){}
+function save(){try{localStorage.setItem('prayer5',JSON.stringify({dur:$('dur').value,rem:$('rem').value,step:$('step').value,auto:$('auto').checked}))}catch(e){}}
 function fmt(s){s=Math.max(0,Math.ceil(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 function audio(){if(!ctx)ctx=new (window.AudioContext||window.webkitAudioContext)();if(ctx.state==='suspended')ctx.resume();return ctx}
 function speak(t){
@@ -81,15 +89,17 @@ function clearSched(){clearNodes();try{speechSynthesis.cancel()}catch(e){}}
 function schedAll(){
   clearNodes();
   const left=(end-Date.now())/1000,rem=Math.min(left,+$('rem').value||0);
-  try{audio();if(!spoken)sched(Math.max(0.01,left-rem),say);sched(left,()=>{if($('auto').checked)start()})}catch(e){}
+  try{audio();if(!spoken)sched(Math.max(0.01,left-rem),say);sched(left,()=>{if($('auto').checked)start(true)})}catch(e){}
 }
 function stopTicker(){try{tw.clearInterval(timer)}catch(e){}}
 function setTicker(){stopTicker();tw=W;timer=W.setInterval(tick,200)}
-function start(){
+function start(auto){
   save();
-  total=Math.max(10,+$('dur').value||118);
+  total=Math.max(10,+$('dur').value||117.5);
   clearSched();
-  end=Date.now()+total*1000;alerted=false;spoken=false;running=true;
+  const now=Date.now(),nx=end+total*1000;
+  // 自動循環時以「上一輪的結束時間」為基準往後加，避免每輪累積延遲
+  end=(auto===true&&running&&nx>now)?nx:now+total*1000;alerted=false;spoken=false;running=true;
   paint(v=>v.box.classList.remove('alert'));document.title='楓之谷祈禱提醒';
   schedAll();setTicker();tick();
 }
@@ -124,7 +134,7 @@ function bindStop(w){
 }
 function tick(){
   const left=(end-Date.now())/1000,rem=+$('rem').value||0;
-  if(left<=-0.5&&$('auto').checked){start();return}
+  if(left<=-0.5&&$('auto').checked){start(true);return}
   if(left<=rem&&!alerted){alerted=true;paint(v=>v.box.classList.add('alert'));document.title='⚠ 該吸祈禱囉';say()}
   const txt=(left<=0&&!$('auto').checked)?'已結束，按▶重計':(alerted?'該吸了！吸完按▶重計':'倒數中');
   paint(v=>{v.t.textContent=fmt(left);v.f.style.width=Math.max(0,left/total*100)+'%';v.s.textContent=txt});
@@ -133,7 +143,7 @@ function tick(){
 function reset(){
   stopTicker();clearSched();running=false;alerted=false;
   document.title='楓之谷祈禱提醒';
-  paint(v=>{v.box.classList.remove('alert');v.t.textContent=fmt(+$('dur').value||118);v.f.style.width='0';v.s.textContent='按▶開始'});
+  paint(v=>{v.box.classList.remove('alert');v.t.textContent=fmt(+$('dur').value||117.5);v.f.style.width='0';v.s.textContent='按▶開始'});
 }
 function tap(e){
   const b=e.target.closest&&e.target.closest('button');
