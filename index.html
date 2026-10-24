@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>楓之谷 Boss 計時器 (啾察隊專用版 ver.20261009.02)</title>
+  <title>楓之谷 Boss 計時器 (啾察隊專用版 ver.20261024.01)</title>
   
   <!-- 引入 Firebase SDK (版本 9.x 兼容模式) -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -281,6 +281,9 @@
     .online-row .meta { font-size: 0.75rem; color: #8a7d66; white-space: nowrap; }
     .online-row.me { background: #fff8e1; }
     .online-empty { padding: 1rem; text-align: center; color: #8a7d66; font-size: 0.875rem; }
+    .range-row { display: flex; align-items: center; gap: 0.5rem; }
+    .range-row input { flex: 1; min-width: 0; }
+    .range-hint { margin-top: 0.3125rem; font-size: 0.75rem; color: #8a7d66; line-height: 1.5; }
     .nick-hint { display: none; font-size: 0.8125rem; color: #c0392b; margin-bottom: 0.5rem; }
   
   </style>
@@ -375,7 +378,7 @@
   <!-- 修改各 Boss 玩家設定冷卻時間彈窗 (權限限 Admin) -->
   <div id="bossCdModal" class="modal">
     <div class="modal-content">
-      <h3>⚙️ 設定 Boss 玩家冷卻時間</h3>
+      <h3>⚙️ 設定 Boss 冷卻與重生時間</h3>
       <div class="form-group">
         <label>最大權限者金鑰 (Admin Key)</label>
         <input type="password" id="cdAdminKeyInput" placeholder="請輸入管理員金鑰">
@@ -388,8 +391,18 @@
         <label>冷卻時間 (秒)</label>
         <input type="number" id="cdSecInput" min="0" placeholder="請輸入秒數，例如: 5">
       </div>
+      <div class="form-group">
+        <label>重生時間範圍 (分鐘)</label>
+        <div class="range-row">
+          <input type="number" id="rangeMinInput" min="1" max="1440" placeholder="最短">
+          <span>~</span>
+          <input type="number" id="rangeMaxInput" min="1" max="1440" placeholder="最長">
+        </div>
+        <div class="range-hint">最短 = 最長 代表固定時間（可使用自動巡迴）；兩者不同則為區間王，只能手動巡迴。預設：<b id="rangeDefaultText">--</b></div>
+      </div>
       <div class="modal-btns">
         <button type="button" class="btn-save" onclick="saveBossCdSetting()">儲存設定</button>
+        <button type="button" class="btn-clear" onclick="resetBossRange()">還原此王預設重生時間</button>
         <button type="button" class="btn-close" onclick="closeBossCdModal()">取消</button>
       </div>
     </div>
@@ -477,7 +490,7 @@
     // ==========================================
     // 當前程式版本號
     // ==========================================
-    const APP_VERSION = "ver.20261009.02";
+    const APP_VERSION = "ver.20261024.01";
 
     // 【必填】apiKey 請到 Firebase Console → 專案設定（齒輪）→ 一般 → 您的應用程式 → 網頁應用程式 → SDK 設定與配置，
     // 複製 apiKey 貼到下方引號內（沒有網頁應用程式的話，先按「新增應用程式」建立一個）。
@@ -546,7 +559,8 @@
     let currentBoss = bosses[0];
     let timerCache = {}; 
     let bossCdCache = {};
-    let bossCycleCache = {}; // 各王的巡迴模式：'auto' | 'manual'（存在 Firebase，全隊共用）
+    let bossCycleCache = {};
+    let bossRangeCache = {}; // 管理員自訂的重生時間範圍：{ <bossId>: { min, max } } // 各王的巡迴模式：'auto' | 'manual'（存在 Firebase，全隊共用）
     let sortByTime = false;
     let isVersionValid = true;
     
@@ -713,6 +727,17 @@
     /* ==========================================
        Boss 冷卻時間設定彈窗與處理 logic
     ========================================== */
+    function fillCdModalFields(bossId) {
+      const boss = bosses.find(b => b.id === bossId);
+      if (!boss) return;
+      document.getElementById('cdSecInput').value = getBossCdSec(bossId);
+      document.getElementById('rangeMinInput').value = boss.minMin;
+      document.getElementById('rangeMaxInput').value = boss.maxMin;
+      const dMin = boss.defMin !== undefined ? boss.defMin : boss.minMin;
+      const dMax = boss.defMax !== undefined ? boss.defMax : boss.maxMin;
+      document.getElementById('rangeDefaultText').textContent = dMin === dMax ? `${dMin} 分鐘` : `${dMin} ~ ${dMax} 分鐘`;
+    }
+
     function openBossCdModal() {
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
       document.getElementById('cdAdminKeyInput').value = '';
@@ -727,12 +752,8 @@
         cdBossSelect.appendChild(opt);
       });
 
-      const curCd = getBossCdSec(currentBoss.id);
-      document.getElementById('cdSecInput').value = curCd;
-      
-      cdBossSelect.onchange = function() {
-        document.getElementById('cdSecInput').value = getBossCdSec(this.value);
-      };
+      fillCdModalFields(currentBoss.id);
+      cdBossSelect.onchange = function() { fillCdModalFields(this.value); };
 
       document.getElementById('bossCdModal').style.display = 'flex';
     }
@@ -745,8 +766,13 @@
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
       const adminKey = document.getElementById('cdAdminKeyInput').value.trim();
       const bossId = document.getElementById('cdBossSelect').value;
+      const boss = bosses.find(b => b.id === bossId);
       const cdSecRaw = document.getElementById('cdSecInput').value.trim();
       const cdSec = parseInt(cdSecRaw, 10);
+      const minRaw = document.getElementById('rangeMinInput').value.trim();
+      const maxRaw = document.getElementById('rangeMaxInput').value.trim();
+      const rMin = parseInt(minRaw, 10);
+      const rMax = parseInt(maxRaw, 10);
 
       if (!adminKey) {
         alert("請輸入管理員金鑰！");
@@ -756,13 +782,41 @@
         alert("請輸入有效的冷卻秒數（正整數或0）！");
         return;
       }
+      if (minRaw === '' || maxRaw === '' || isNaN(rMin) || isNaN(rMax) || rMin < 1 || rMax < rMin || rMax > 1440) {
+        alert("重生時間範圍不正確：請輸入 1 ~ 1440 的整數分鐘，且「最長」不可小於「最短」！");
+        return;
+      }
 
-      withAdmin(adminKey, () => db.ref(`rooms/${roomId}/bossCdSettings/${bossId}`).set(cdSec)).then(() => {
-        alert(`已成功將【${bosses.find(b => b.id === bossId).name}】的冷卻時間設定為 +${cdSec} 秒！`);
+      // 與程式內建預設相同就不存，保持資料庫乾淨
+      const isDefault = boss.defMin !== undefined && rMin === boss.defMin && rMax === boss.defMax;
+      withAdmin(adminKey, () => Promise.all([
+        db.ref(`rooms/${roomId}/bossCdSettings/${bossId}`).set(cdSec),
+        isDefault
+          ? db.ref(`rooms/${roomId}/bossRangeSettings/${bossId}`).remove()
+          : db.ref(`rooms/${roomId}/bossRangeSettings/${bossId}`).set({ min: rMin, max: rMax })
+      ])).then(() => {
+        const rangeText = rMin === rMax ? `${rMin} 分鐘` : `${rMin} ~ ${rMax} 分鐘`;
+        alert(`已成功更新【${boss.name}】：冷卻 +${cdSec} 秒、重生時間 ${rangeText}！`);
         closeBossCdModal();
       }).catch(err => {
         if (err && err.stage === 'key') alert("【權限不足】管理者金鑰錯誤！");
         else alert("寫入資料庫失敗，請重試！");
+      });
+    }
+
+    // 移除自訂重生時間，回到程式內建預設
+    function resetBossRange() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      const adminKey = document.getElementById('cdAdminKeyInput').value.trim();
+      const bossId = document.getElementById('cdBossSelect').value;
+      const boss = bosses.find(b => b.id === bossId);
+      if (!adminKey) { alert("請輸入管理員金鑰！"); return; }
+      withAdmin(adminKey, () => db.ref(`rooms/${roomId}/bossRangeSettings/${bossId}`).remove()).then(() => {
+        alert(`已將【${boss.name}】的重生時間還原為預設值！`);
+        closeBossCdModal();
+      }).catch(err => {
+        if (err && err.stage === 'key') alert("【權限不足】管理者金鑰錯誤！");
+        else alert("操作失敗，請重試！");
       });
     }
 
@@ -992,6 +1046,9 @@
           timerCache = val;
           bossCdCache = val.bossCdSettings || {};
           bossCycleCache = val.bossCycleSettings || {};
+          bossRangeCache = val.bossRangeSettings || {};
+          applyBossOverrides();
+          refreshBossHeaderInfo();
           if (val.discordWebhook) DEFAULT_WEBHOOK_URL = val.discordWebhook;
           updateCycleSwitch();
           scanAllBosses();
@@ -1050,6 +1107,28 @@
       });
     }
 
+    // 標題列的「重生時間／玩家冷卻」說明文字
+    function refreshBossHeaderInfo() {
+      const el = document.getElementById('current-boss-info');
+      if (!el || !currentBoss) return;
+      const boss = currentBoss;
+      const timeText = boss.minMin === boss.maxMin ? `${boss.minMin} 分鐘` : `${boss.minMin} ~ ${boss.maxMin} 分鐘`;
+      el.textContent = `重生時間：${timeText} (玩家冷卻：+${getBossCdSec(boss.id)}秒)`;
+    }
+
+    // 把資料庫裡的自訂重生時間範圍套用到 Boss 清單（沒有自訂就還原程式內建預設）。
+    // 之後所有畫面、通知、小視窗讀到的都是同一份數值。
+    function applyBossOverrides() {
+      bosses.forEach(boss => {
+        if (boss.defMin === undefined) { boss.defMin = boss.minMin; boss.defMax = boss.maxMin; }
+        const ov = bossRangeCache ? bossRangeCache[boss.id] : null;
+        const mn = ov ? parseInt(ov.min, 10) : NaN;
+        const mx = ov ? parseInt(ov.max, 10) : NaN;
+        if (ov && mn >= 1 && mx >= mn) { boss.minMin = mn; boss.maxMin = mx; }
+        else { boss.minMin = boss.defMin; boss.maxMin = boss.defMax; }
+      });
+    }
+
     function selectBoss(boss) {
       currentBoss = boss;
       document.getElementById('current-boss-name').innerHTML = `
@@ -1057,9 +1136,7 @@
         <span id="room-display" class="room-badge">小隊: ${roomId}</span>
         <span id="version-display" class="version-badge">${APP_VERSION}</span>
       `;
-      const timeText = boss.minMin === boss.maxMin ? `${boss.minMin} 分鐘` : `${boss.minMin} ~ ${boss.maxMin} 分鐘`;
-      const cdSec = getBossCdSec(boss.id);
-      document.getElementById('current-boss-info').innerText = `重生時間：${timeText} (玩家冷卻：+${cdSec}秒)`;
+      refreshBossHeaderInfo();
       updateCycleSwitch();
       initSidebar();
       renderChannels();
@@ -1157,7 +1234,7 @@
       
       if (discordConfig.kill) {
         const autoText = isAuto ? "【自動重新計時】" : "";
-        sendDiscordMsg(`⚔️ **【擊殺紀錄】** [${roomId}] ${boss.name} - ${ch} 頻 ${autoText}已更新時間進入冷卻！`);
+        sendDiscordMsg(`⚔️ **【擊殺紀錄】** [${roomId}] **${killerName()}** 擊殺了 ${boss.name} - ${ch} 頻 ${autoText}`.trim());
       }
     }
 
@@ -1486,8 +1563,7 @@
       .mode.locked{opacity:.5;cursor:not-allowed}
       .row .c{flex:0 0 2.75rem;font-weight:bold;font-size:1rem}
       .row .t{flex:0 0 2.75rem;font-size:0.8333rem;color:#8a7d66;font-variant-numeric:tabular-nums}
-      .row .t.rg{display:flex;flex-direction:column;justify-content:center;font-size:0.75rem;line-height:1.1}
-      .row .t.rg i{font-style:normal;display:block;white-space:nowrap}
+      .row .t.rg{flex:0 0 4.4rem;font-size:0.75rem;white-space:nowrap}
       .row .cd{flex:1;min-width:0;text-align:right;font-size:1.25rem;font-weight:bold;white-space:nowrap;font-variant-numeric:tabular-nums;color:#2d6a31}
       .row.soon .cd{color:#c0392b}
       .row.cd .cd{color:#14917a}
@@ -1569,7 +1645,7 @@
               const tip = isAuto ? '自動巡迴（點擊切換為手動）' : (locked ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）');
               return `<div class="row ${r.cls}${popFlash === r.ch ? ' flash' : ''}">`
                 + `<span class="mode ${isAuto ? 'auto' : 'manual'}${locked ? ' locked' : ''}" data-act="cycle" data-ch="${r.ch}" title="${tip}">${isAuto ? '自' : '手'}</span>`
-                + `<span class="c">${r.ch} 頻</span>${r.time2 ? `<span class="t rg" title="重生時間區間"><i>${r.time}</i><i>~${r.time2}</i></span>` : `<span class="t">${r.time}</span>`}<span class="cd" data-ch="${r.ch}"></span>`
+                + `<span class="c">${r.ch} 頻</span>${r.time2 ? `<span class="t rg" title="重生時間區間">${r.time}~${r.time2}</span>` : `<span class="t">${r.time}</span>`}<span class="cd" data-ch="${r.ch}"></span>`
                 + `<button type="button" class="kill" data-act="kill" data-ch="${r.ch}">擊殺</button>`
                 + `<button type="button" class="rs" data-act="reset" data-ch="${r.ch}">重置</button></div>`;
             }).join('')
@@ -1728,11 +1804,19 @@
     }
     window.addEventListener('pagehide', closePopout);
 
+    // 擊殺者名稱：使用登入時輸入的暱稱 / ID（尚未設定時以「訪客＋編號」代替）。
+    // 暱稱是使用者自己輸入的內容：跳脫 Discord 的格式符號，並把 @ 後面插入零寬空白，避免被當成標記他人。
+    function killerName() {
+      const raw = myNick || (myUid ? `訪客${String(myUid).slice(0, 4)}` : '有人');
+      return String(raw).replace(/([\\*_~`|>:#\[\]()])/g, '\\$1').replace(/@/g, '@\u200b');
+    }
+
     function postToDiscord(url, content, onFail) {
       fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: content })
+        // allowed_mentions.parse = []：訊息中即使出現 @everyone / @人名，也不會真的通知任何人
+        body: JSON.stringify({ content: content, allowed_mentions: { parse: [] } })
       }).then(res => {
         if (!res.ok && onFail) onFail();
       }).catch(err => {
