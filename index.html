@@ -133,6 +133,7 @@
     .version-badge { background: rgba(255, 255, 255, 0.18); color: #fff; padding: 2px 0.5625rem; border-radius: 0.75rem; font-size: 0.75rem; font-weight: bold; }
     .header-btns { display: flex; gap: 0.5rem; align-items: center; }
     .header-btns .btn-tool, .header-btns .btn-ch { margin: 0; padding: 0.4375rem 0.8125rem; width: auto; font-size: 0.8125rem; border-radius: 0.4375rem; }
+    .btn-copy { background: linear-gradient(#2ec4b6, #1a9d90); }
     .btn-popout { background: linear-gradient(#a45bc2, #823a9f); }
     .btn-sort { background: linear-gradient(#4aa3e0, #2b7fc0); }
     .btn-sort.on { background: linear-gradient(#f0933f, #d9731a); }
@@ -337,6 +338,7 @@
       </div>
       <div class="header-btns">
         <button id="online-btn" class="btn-tool btn-online" onclick="openOnlineModal()" title="查看線上人員">線上 0 人</button>
+        <button id="copy-btn" class="btn-tool btn-copy" onclick="copyBossRecords()" title="複製這隻王所有有記錄的頻道與重生時間（純文字）">複製記錄</button>
         <button id="popout-btn" class="btn-tool btn-popout" onclick="openPopout()" title="開啟 300x200 置頂小視窗（Chrome / Edge 可永遠置頂），方便直接按擊殺">彈出小視窗</button>
         <button id="sort-toggle-btn" class="btn-tool btn-sort" onclick="toggleSortMode()">排序：頻道1~60</button>
         <button class="btn-ch reset" onclick="clearCurrentBossData()">重置全頻道</button>
@@ -2070,6 +2072,47 @@
         if (presenceCache[k] && presenceCache[k].uid === myUid) presenceCache[k].name = nick;
       });
       renderOnline();
+    }
+
+    /* ==========================================
+       複製這隻王所有「有記錄」的頻道與重生時間（純文字，一行一個頻道）
+       例：18頻 10:18　／　區間王：7頻 10:30~10:45
+       排列順序與主畫面目前的排序方式相同（頻道 1~60 或剩餘時間置頂）
+    ========================================== */
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) { /* 改用備援方式 */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e) { return false; }
+    }
+
+    let copyBtnTimer = null;
+    async function copyBossRecords() {
+      const rows = computePopoutRows(currentBoss, Date.now());
+      if (!rows.length) { alert(`【${currentBoss.name}】目前沒有任何頻道記錄！`); return; }
+      if (!sortByTime) rows.sort((a, b) => a.ch - b.ch);
+      const text = rows.map(r => `${r.ch}頻 ${r.time2 ? `${r.time}~${r.time2}` : r.time}`).join('\n');
+
+      const btn = document.getElementById('copy-btn');
+      const ok = await copyText(text);
+      clearTimeout(copyBtnTimer);
+      btn.textContent = ok ? `已複製 ${rows.length} 筆` : '複製失敗';
+      copyBtnTimer = setTimeout(() => { btn.textContent = '複製記錄'; }, 1600);
+      if (!ok) alert("瀏覽器不允許複製，請改用 https 網址開啟，或手動選取內容複製。");
     }
 
     // 初始化流程
