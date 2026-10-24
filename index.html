@@ -269,6 +269,19 @@
     .btn-clear:hover { filter: brightness(1.08); }
     .btn-close { background: #fff; border: 1px solid #cdbf9f; color: #5a4a33; padding: 0.625rem; border-radius: 0.5rem; cursor: pointer; font-size: 0.875rem; }
     .btn-close:hover { background: #f3ead6; }
+
+    /* 線上人員 */
+    .btn-online { background: linear-gradient(#3dc176, #22a05a); }
+    .btn-online::before { content: ""; display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #c8f7da; margin-right: 0.4rem; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35); vertical-align: middle; }
+    .online-list { max-height: 16rem; overflow-y: auto; margin-bottom: 0.75rem; border: 1px solid var(--line); border-radius: 0.5rem; background: #fff; }
+    .online-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4375rem 0.625rem; border-bottom: 1px solid #f0e9d8; font-size: 0.875rem; }
+    .online-row:last-child { border-bottom: 0; }
+    .online-row .dot { flex: 0 0 0.5625rem; height: 0.5625rem; border-radius: 50%; background: #22a05a; box-shadow: 0 0 0 2px rgba(34, 160, 90, 0.2); }
+    .online-row .nm { flex: 1; min-width: 0; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .online-row .meta { font-size: 0.75rem; color: #8a7d66; white-space: nowrap; }
+    .online-row.me { background: #fff8e1; }
+    .online-empty { padding: 1rem; text-align: center; color: #8a7d66; font-size: 0.875rem; }
+    .nick-hint { display: none; font-size: 0.8125rem; color: #c0392b; margin-bottom: 0.5rem; }
   
   </style>
 </head>
@@ -320,6 +333,7 @@
         </div>
       </div>
       <div class="header-btns">
+        <button id="online-btn" class="btn-tool btn-online" onclick="openOnlineModal()" title="查看線上人員">線上 0 人</button>
         <button id="popout-btn" class="btn-tool btn-popout" onclick="openPopout()" title="開啟 300x200 置頂小視窗（Chrome / Edge 可永遠置頂），方便直接按擊殺">彈出小視窗</button>
         <button id="sort-toggle-btn" class="btn-tool btn-sort" onclick="toggleSortMode()">排序：頻道1~60</button>
         <button class="btn-ch reset" onclick="clearCurrentBossData()">重置全頻道</button>
@@ -331,12 +345,30 @@
       <div id="fog-overlay" class="fog-overlay">
         <div class="fog-box">
           <h3>🌫️ 計時區域已被迷霧覆蓋</h3>
-          <p>請輸入指定密碼解鎖內容</p>
+          <p>請輸入暱稱 / ID 與指定密碼解鎖內容</p>
+          <input type="text" id="input-nick" maxlength="12" placeholder="暱稱 / ID（必填，最多 12 字）" autocomplete="off" onkeydown="if(event.key==='Enter') document.getElementById('input-view-pass').focus()">
           <input type="password" id="input-view-pass" placeholder="請輸入密碼" onkeydown="if(event.key==='Enter') unlockFog()">
           <button type="button" onclick="unlockFog()">解鎖查看</button>
         </div>
       </div>
       <div id="channel-grid"></div>
+    </div>
+  </div>
+
+  <!-- 線上人員彈窗 -->
+  <div id="onlineModal" class="modal">
+    <div class="modal-content">
+      <h3>線上人員 <span id="onlineCount">0</span> 人</h3>
+      <div id="nickHint" class="nick-hint">請先設定你的暱稱 / ID，隊友才認得出你。</div>
+      <div id="onlineList" class="online-list"></div>
+      <div class="form-group">
+        <label>我的暱稱 / ID</label>
+        <input type="text" id="nickEditInput" maxlength="12" placeholder="最多 12 字" autocomplete="off" onkeydown="if(event.key==='Enter') saveMyNickname()">
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-save" onclick="saveMyNickname()">儲存暱稱</button>
+        <button type="button" class="btn-close" onclick="closeOnlineModal()">關閉</button>
+      </div>
     </div>
   </div>
 
@@ -579,6 +611,7 @@
       } else {
         document.getElementById('fog-overlay').style.display = 'flex';
         document.getElementById('input-view-pass').value = '';
+        document.getElementById('input-nick').value = myNick; // 記住這台瀏覽器（同一組匿名登入）上次輸入的暱稱
       }
     }
 
@@ -588,6 +621,12 @@
         return;
       }
 
+      const nick = sanitizeNick(document.getElementById('input-nick').value);
+      if (!nick) {
+        alert("請輸入暱稱或 ID！");
+        document.getElementById('input-nick').focus();
+        return;
+      }
       const pwd = document.getElementById('input-view-pass').value.trim();
       if (!pwd) {
         alert("請輸入密碼！");
@@ -597,9 +636,12 @@
       // 密碼不再下載到瀏覽器比對：把輸入的密碼寫入 members/<小隊>/<uid>，
       // 由資料庫安全規則在伺服器端判斷是否與 secrets 內的密碼相同。
       authReady.then(user => db.ref(`members/${roomId}/${user.uid}`).set(pwd)).then(() => {
+        myNick = nick;
+        try { localStorage.setItem('boss_nickname', nick); } catch (e) {}
         sessionStorage.setItem(`unlocked_${roomId}`, 'true');
         checkFogAuth();
         listenToFirebase();
+        updatePresenceName(); // 若本次是改用新暱稱重新登入，同步更新線上名單
       }).catch(err => {
         if (isPermissionDenied(err)) {
           alert("密碼不正確，無法解鎖！");
@@ -626,6 +668,7 @@
 
     function logout() {
       sessionStorage.removeItem(`unlocked_${roomId}`);
+      stopPresence();
       db.ref(`rooms/${roomId}`).off();
       authReady.then(user => db.ref(`members/${roomId}/${user.uid}`).remove()).catch(() => {});
       checkFogAuth();
@@ -941,6 +984,7 @@
     function listenToFirebase() {
       // 未通過密碼驗證前不連線讀取資料（資料庫規則也會擋）
       if (sessionStorage.getItem(`unlocked_${roomId}`) !== 'true') return;
+      startPresence();
       authReady.then(() => {
         db.ref(`rooms/${roomId}`).off();
         db.ref(`rooms/${roomId}`).on('value', (snapshot) => {
@@ -1442,6 +1486,8 @@
       .mode.locked{opacity:.5;cursor:not-allowed}
       .row .c{flex:0 0 2.75rem;font-weight:bold;font-size:1rem}
       .row .t{flex:0 0 2.75rem;font-size:0.8333rem;color:#8a7d66;font-variant-numeric:tabular-nums}
+      .row .t.rg{display:flex;flex-direction:column;justify-content:center;font-size:0.75rem;line-height:1.1}
+      .row .t.rg i{font-style:normal;display:block;white-space:nowrap}
       .row .cd{flex:1;min-width:0;text-align:right;font-size:1.25rem;font-weight:bold;white-space:nowrap;font-variant-numeric:tabular-nums;color:#2d6a31}
       .row.soon .cd{color:#c0392b}
       .row.cd .cd{color:#14917a}
@@ -1482,6 +1528,7 @@
           mode: mode,
           remainMs: remainMs,
           time: formatTime(new Date(st.kill + minMs)),
+          time2: boss.minMin !== boss.maxMin ? formatTime(new Date(st.kill + maxMs)) : '',
           text: text,
           cls: st.cdStart ? 'cd' : (remainMs / 1000 <= SOON_SEC ? 'soon' : '')
         });
@@ -1513,7 +1560,7 @@
       if (!list) return;
       const locked = popBoss.minMin !== popBoss.maxMin;
       const rows = computePopoutRows(popBoss, Date.now());
-      const sig = rows.map(r => `${r.ch}|${r.time}|${r.cls}|${r.mode}`).join(',');
+      const sig = rows.map(r => `${r.ch}|${r.time}|${r.time2}|${r.cls}|${r.mode}`).join(',');
       if (sig !== popSig) {
         popSig = sig;
         list.innerHTML = rows.length
@@ -1522,7 +1569,7 @@
               const tip = isAuto ? '自動巡迴（點擊切換為手動）' : (locked ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）');
               return `<div class="row ${r.cls}${popFlash === r.ch ? ' flash' : ''}">`
                 + `<span class="mode ${isAuto ? 'auto' : 'manual'}${locked ? ' locked' : ''}" data-act="cycle" data-ch="${r.ch}" title="${tip}">${isAuto ? '自' : '手'}</span>`
-                + `<span class="c">${r.ch} 頻</span><span class="t">${r.time}</span><span class="cd" data-ch="${r.ch}"></span>`
+                + `<span class="c">${r.ch} 頻</span>${r.time2 ? `<span class="t rg" title="重生時間區間"><i>${r.time}</i><i>~${r.time2}</i></span>` : `<span class="t">${r.time}</span>`}<span class="cd" data-ch="${r.ch}"></span>`
                 + `<button type="button" class="kill" data-act="kill" data-ch="${r.ch}">擊殺</button>`
                 + `<button type="button" class="rs" data-act="reset" data-ch="${r.ch}">重置</button></div>`;
             }).join('')
@@ -1770,6 +1817,175 @@
       localStorage.setItem('discord_config', JSON.stringify(discordConfig));
       alert('已還原通知選項預設值！');
       closeDiscordModal();
+    }
+
+    /* ==========================================
+       暱稱與線上人員
+       - 登入時輸入暱稱 / ID，儲存在這台瀏覽器（與這組匿名登入綁在一起），下次自動帶入。
+       - 解鎖後在 presence/<小隊>/<uid>_<分頁代號> 寫入自己的名字，斷線時由伺服器自動移除；
+         另外每分鐘更新一次 lastSeen，萬一沒被移除，逾時的紀錄在畫面上會被忽略。
+       - 同一個人開多個分頁只算 1 人。
+    ========================================== */
+    let myNick = '';
+    try { myNick = (localStorage.getItem('boss_nickname') || '').trim(); } catch (e) {}
+    let myUid = null;
+    let presenceStarted = false;
+    let presenceRef = null;
+    let presenceCache = {};
+    let presenceHeartbeat = null;
+    let presenceRefresh = null;
+    let serverOffset = 0;
+    const presenceConnId = Math.random().toString(36).slice(2, 8);
+    const PRESENCE_STALE_MS = 240 * 1000;
+
+    function sanitizeNick(v) {
+      return String(v || '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 12);
+    }
+
+    function presenceName(uid) {
+      return myNick || `訪客${String(uid).slice(0, 4)}`;
+    }
+
+    function startPresence() {
+      if (presenceStarted) return;
+      presenceStarted = true;
+      authReady.then(user => {
+        if (!presenceStarted) return;
+        myUid = user.uid;
+        const TS = firebase.database.ServerValue.TIMESTAMP;
+        const ref = db.ref(`presence/${roomId}/${user.uid}_${presenceConnId}`);
+        presenceRef = ref;
+
+        db.ref('.info/serverTimeOffset').on('value', snap => { serverOffset = snap.val() || 0; });
+        // 每次（重新）連線都重新登記：先登記斷線自動移除，再寫入自己
+        db.ref('.info/connected').on('value', snap => {
+          if (snap.val() !== true || presenceRef !== ref) return;
+          ref.onDisconnect().remove()
+            .then(() => ref.set({ name: presenceName(user.uid), uid: user.uid, since: TS, lastSeen: TS }))
+            .catch(() => {});
+        });
+        presenceHeartbeat = setInterval(() => {
+          if (presenceRef === ref) ref.child('lastSeen').set(TS).catch(() => {});
+        }, 60 * 1000);
+        presenceRefresh = setInterval(renderOnline, 30 * 1000);
+
+        db.ref(`presence/${roomId}`).on('value', snap => {
+          presenceCache = snap.val() || {};
+          renderOnline();
+        }, () => {});
+
+        if (!myNick) promptNickname(); // 舊版已解鎖、尚未設定暱稱的人
+      }).catch(() => { presenceStarted = false; });
+    }
+
+    function stopPresence() {
+      if (!presenceStarted) return;
+      presenceStarted = false;
+      clearInterval(presenceHeartbeat);
+      clearInterval(presenceRefresh);
+      try {
+        db.ref('.info/connected').off();
+        db.ref('.info/serverTimeOffset').off();
+        db.ref(`presence/${roomId}`).off();
+      } catch (e) {}
+      if (presenceRef) {
+        const ref = presenceRef;
+        presenceRef = null;
+        ref.onDisconnect().cancel().catch(() => {});
+        ref.remove().catch(() => {});
+      }
+      presenceCache = {};
+      renderOnline();
+    }
+
+    function updatePresenceName() {
+      if (presenceRef && myUid) presenceRef.child('name').set(presenceName(myUid)).catch(() => {});
+    }
+
+    // 以人（uid）為單位彙整線上名單；忽略逾時未更新的紀錄
+    function getOnlineUsers() {
+      const now = Date.now() + serverOffset;
+      const byUid = {};
+      Object.keys(presenceCache || {}).forEach(k => {
+        const v = presenceCache[k];
+        if (!v || !v.uid) return;
+        const seen = typeof v.lastSeen === 'number' ? v.lastSeen : (typeof v.since === 'number' ? v.since : now);
+        if (now - seen > PRESENCE_STALE_MS) return;
+        const since = typeof v.since === 'number' ? v.since : now;
+        const cur = byUid[v.uid];
+        if (!cur) {
+          byUid[v.uid] = { uid: v.uid, name: String(v.name || '').slice(0, 20) || '訪客', since: since, tabs: 1 };
+        } else {
+          cur.tabs++;
+          if (since < cur.since) cur.since = since;
+        }
+      });
+      return Object.keys(byUid).map(k => byUid[k]).sort((a, b) => a.since - b.since);
+    }
+
+    function fillOnlineList(users) {
+      const list = document.getElementById('onlineList');
+      document.getElementById('onlineCount').textContent = users.length;
+      list.innerHTML = '';
+      if (!users.length) {
+        const empty = document.createElement('div');
+        empty.className = 'online-empty';
+        empty.textContent = '目前沒有線上人員資料';
+        list.appendChild(empty);
+        return;
+      }
+      users.forEach(u => {
+        const row = document.createElement('div');
+        row.className = 'online-row' + (u.uid === myUid ? ' me' : '');
+        const dot = document.createElement('span'); dot.className = 'dot';
+        const nm = document.createElement('span'); nm.className = 'nm';
+        nm.textContent = u.name + (u.uid === myUid ? '（我）' : '');
+        const meta = document.createElement('span'); meta.className = 'meta';
+        meta.textContent = `上線 ${formatTime(new Date(u.since))}` + (u.tabs > 1 ? ` ・${u.tabs} 個分頁` : '');
+        row.appendChild(dot); row.appendChild(nm); row.appendChild(meta);
+        list.appendChild(row);
+      });
+    }
+
+    function renderOnline() {
+      const users = getOnlineUsers();
+      const btn = document.getElementById('online-btn');
+      if (btn) btn.textContent = `線上 ${users.length} 人`;
+      const modal = document.getElementById('onlineModal');
+      if (modal && modal.style.display === 'flex') fillOnlineList(users);
+    }
+
+    function openOnlineModal() {
+      document.getElementById('nickEditInput').value = myNick;
+      document.getElementById('nickHint').style.display = 'none';
+      document.getElementById('onlineModal').style.display = 'flex';
+      fillOnlineList(getOnlineUsers());
+    }
+
+    function promptNickname() {
+      document.getElementById('nickEditInput').value = '';
+      document.getElementById('nickHint').style.display = 'block';
+      document.getElementById('onlineModal').style.display = 'flex';
+      fillOnlineList(getOnlineUsers());
+      document.getElementById('nickEditInput').focus();
+    }
+
+    function closeOnlineModal() {
+      document.getElementById('onlineModal').style.display = 'none';
+    }
+
+    function saveMyNickname() {
+      const nick = sanitizeNick(document.getElementById('nickEditInput').value);
+      if (!nick) { alert("請輸入暱稱或 ID！"); return; }
+      myNick = nick;
+      try { localStorage.setItem('boss_nickname', nick); } catch (e) {}
+      document.getElementById('nickHint').style.display = 'none';
+      updatePresenceName();
+      // 本機先行更新，不必等伺服器回傳
+      Object.keys(presenceCache || {}).forEach(k => {
+        if (presenceCache[k] && presenceCache[k].uid === myUid) presenceCache[k].name = nick;
+      });
+      renderOnline();
     }
 
     // 初始化流程
