@@ -340,7 +340,7 @@
       <div class="header-btns">
         <button id="online-btn" class="btn-tool btn-online" onclick="openOnlineModal()" title="查看線上人員">線上 0 人</button>
         <button id="copy-btn" class="btn-tool btn-copy" onclick="copyBossRecords()" title="複製這隻王所有有記錄的頻道與重生時間（純文字）">複製記錄</button>
-        <button id="popout-btn" class="btn-tool btn-popout" onclick="openPopout()" title="開啟 300x200 置頂小視窗（Chrome / Edge 可永遠置頂），方便直接按擊殺">彈出小視窗</button>
+        <button id="popout-btn" class="btn-tool btn-popout" onclick="openPopout()" title="開啟置頂小視窗（Chrome / Edge 可永遠置頂），方便直接按擊殺">彈出小視窗</button>
         <button id="sort-toggle-btn" class="btn-tool btn-sort" onclick="toggleSortMode()">排序：頻道1~60</button>
         <button class="btn-ch reset" onclick="clearCurrentBossData()">重置全頻道</button>
       </div>
@@ -1528,7 +1528,7 @@
     }
 
     /* ==========================================
-       彈出置頂小視窗（300x200）：只顯示「頻道」「預計重生時間」與擊殺鈕，與主視窗即時同步。
+       彈出置頂小視窗（預設 320x340，可自行拉大縮小，內容會等比縮放）：只顯示「頻道」「預計重生時間」與擊殺鈕，與主視窗即時同步。
        - Chrome / Edge：使用 Document Picture-in-Picture，視窗會永遠浮在最上層。
        - 其他瀏覽器：退回一般小視窗（無法保證置頂，可搭配作業系統的「視窗置頂」工具）。
        小視窗綁定按下按鈕當下的那隻王，之後主視窗切換別隻王也不受影響。
@@ -1542,57 +1542,60 @@
 
     const POPOUT_CSS = `
       *{box-sizing:border-box}
-      html{font-size:clamp(9px,min(4vw,6vh),28px)}
+      html{font-size:clamp(9px,3.75vw,28px)}
       html,body{margin:0;height:100%}
       body{display:flex;flex-direction:column;background:#f4eee0;color:#3a3226;font-family:"Microsoft JhengHei","PingFang TC",sans-serif;font-size:1rem;user-select:none}
       button{font-family:inherit}
-      .hd{flex:0 0 2.5rem;display:flex;align-items:center;gap:0.5rem;padding:0 0.6667rem;background:linear-gradient(135deg,#5c4327,#7d5c36);color:#fff}
-      .hd .nm{flex:1;min-width:0;font-size:1.1667rem;font-weight:bold;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .hd{flex:0 0 2.75rem;display:flex;align-items:center;gap:0.5rem;padding:0 0.75rem;background:linear-gradient(135deg,#5c4327,#7d5c36);color:#fff;box-shadow:0 2px 6px rgba(60,40,10,.25);position:relative;z-index:1}
+      .hd .nm{flex:1;min-width:0;font-size:1.25rem;font-weight:bold;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .seg{display:flex;border-radius:0.4167rem;overflow:hidden;background:rgba(255,255,255,.16)}
-      .seg button{border:0;background:transparent;color:#f3e9d6;font-size:0.9167rem;padding:0.3333rem 0.6667rem;cursor:pointer;transition:background .15s}
+      .seg button{border:0;background:transparent;color:#f3e9d6;font-size:0.9167rem;padding:0.4167rem 0.75rem;cursor:pointer;transition:background .15s}
       .seg button+button{border-left:1px solid rgba(255,255,255,.2)}
       .seg button:hover:not(:disabled):not(.on){background:rgba(255,255,255,.18)}
       .seg button.on{background:#f3c969;color:#4a3519;font-weight:bold}
       .seg button.arm{background:#e02424;color:#fff;font-weight:bold}
       .seg button:disabled{opacity:.4;cursor:not-allowed}
-      .add{flex:0 0 3.1667rem;display:flex;gap:0.5rem;padding:0.4167rem 0.5833rem;background:#ebe3d0;border-bottom:1px solid #d8cdb2}
-      .add input{width:6.1667rem;padding:0 0.6667rem;border:1px solid #cdbf9f;border-radius:0.5rem;background:#fff;font-size:1.1667rem;font-family:inherit;user-select:text;outline:none}
+      .add{flex:0 0 auto;display:flex;gap:0.5rem;padding:0.5rem 0.75rem;background:#ebe3d0;border-bottom:1px solid #d8cdb2}
+      .add input{width:5.5rem;height:2.25rem;padding:0 0.6667rem;border:1px solid #cdbf9f;border-radius:0.5rem;background:#fff;font-size:1.1667rem;font-family:inherit;user-select:text;outline:none}
       .add input:focus{border-color:#b8986c;box-shadow:0 0 0 2px rgba(184,152,108,.3)}
-      .add button{flex:1;border:0;border-radius:0.5rem;background:linear-gradient(#58b85c,#3f9d44);color:#fff;font-size:1.1667rem;font-weight:bold;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+      .add button{flex:1;height:2.25rem;border:0;border-radius:0.5rem;background:linear-gradient(#58b85c,#3f9d44);color:#fff;font-size:1.1667rem;font-weight:bold;letter-spacing:.1em;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.22)}
       .add button:active,.row .kill:active{transform:scale(.96)}
-      .list{flex:1;overflow-y:auto;padding:0.4167rem 0.5833rem 2px}
+      .list{flex:1;overflow-y:auto;padding:0.6667rem 0.6667rem 0.25rem}
       .list::-webkit-scrollbar{width:0.5rem}
       .list::-webkit-scrollbar-thumb{background:#cbbf9f;border-radius:0.25rem}
-      .row{display:flex;align-items:center;gap:0.3333rem;height:2.25rem;margin-bottom:0.3333rem;padding:0 0.3333rem 0 0.4167rem;background:#fff;border:1px solid #e4dccb;border-left:0.3333rem solid #16a34a;border-radius:0.5rem;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+      .row{display:flex;flex-direction:column;gap:0.4167rem;margin-bottom:0.5833rem;padding:0.5rem 0.6667rem 0.5rem 0.75rem;background:#fff;border:1px solid #e4dccb;border-left:0.3333rem solid #16a34a;border-radius:0.6667rem;box-shadow:0 1px 3px rgba(60,40,10,.08)}
       .row.soon{border-left-color:#e02424;background:#fff4f2}
       .row.cd{border-left-color:#1abc9c;background:#effaf7}
       .row.flash{animation:fl .7s ease-out}
-      @keyframes fl{0%{box-shadow:0 0 0 0.25rem rgba(76,175,80,.8)}100%{box-shadow:0 0 0 0 rgba(76,175,80,0)}}
-      .mode{flex:0 0 1.4167rem;height:1.4167rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.8333rem;font-weight:bold;color:#fff;cursor:pointer;transition:transform .12s}
-      .mode:hover:not(.locked){transform:scale(1.18)}
+      @keyframes fl{0%{box-shadow:0 0 0 3px rgba(76,175,80,.8)}100%{box-shadow:0 1px 3px rgba(60,40,10,.08)}}
+      .l1{display:flex;align-items:center;gap:0.5833rem;min-height:1.75rem}
+      .l2{display:flex;align-items:center;justify-content:space-between;gap:0.5rem}
+      .mode{flex:0 0 1.6667rem;height:1.6667rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.9167rem;font-weight:bold;color:#fff;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .12s}
+      .mode:hover:not(.locked){transform:scale(1.15)}
       .mode.auto{background:#4a6278}
       .mode.manual{background:#e67e22}
       .mode.locked{opacity:.5;cursor:not-allowed}
-      .row .c{flex:0 0 2.5rem;font-weight:bold;font-size:1rem}
-      .row .t{flex:0 0 2.75rem;font-size:0.8333rem;color:#8a7d66;font-variant-numeric:tabular-nums}
-      .row .nt{display:flex;gap:1px;flex:0 0 auto}
-      .row .n{width:1.1667rem;height:1.1667rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:0.75rem;font-weight:bold;line-height:1;border:1px solid #d3cab5;color:#b5ad9a;background:#fff;opacity:.6;cursor:pointer;transition:transform .1s,opacity .15s}
-      .row .n:hover{opacity:1;transform:scale(1.15)}
-      .row .n.on{opacity:1;background:#fff}
-      .row .n.on.solo{border-color:#e74c3c;color:#e74c3c;box-shadow:0 0 3px rgba(231,76,60,.5)}
-      .row .n.on.steal{border-color:#2980b9;color:#2980b9;box-shadow:0 0 3px rgba(41,128,185,.5)}
-      .row .n.on.unsure{border-color:#8e44ad;color:#8e44ad;box-shadow:0 0 3px rgba(142,68,173,.5)}
-      .row .t.rg{flex:0 0 4.4rem;font-size:0.75rem;white-space:nowrap}
-      .row .cd{flex:1;min-width:0;text-align:right;font-size:1.25rem;font-weight:bold;white-space:nowrap;font-variant-numeric:tabular-nums;color:#2d6a31}
-      .row .cd.long{font-size:0.8333rem}
+      .row .c{flex:0 0 auto;font-weight:bold;font-size:1.25rem}
+      .row .t{flex:1;min-width:0;font-size:0.9167rem;color:#8a7d66;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+      .row .cd{flex:0 0 auto;text-align:right;font-size:1.6667rem;line-height:1;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums;color:#2d6a31}
+      .row .cd.long{font-size:1.25rem}
       .row.soon .cd{color:#c0392b}
       .row.cd .cd{color:#14917a}
-      .row button{flex:0 0 2.8333rem;height:1.75rem;border:0;border-radius:0.4167rem;font-size:0.8333rem;font-weight:bold;cursor:pointer;transition:transform .08s,background .15s}
-      .row .kill{background:linear-gradient(#58b85c,#3f9d44);color:#fff}
-      .row .rs{background:#ece6d6;color:#6b5f4c}
+      .nt{display:flex;gap:0.3333rem}
+      .row .n{width:1.6667rem;height:1.6667rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:0.9167rem;font-weight:bold;line-height:1;border:1px solid #d3cab5;color:#b5ad9a;background:#fff;opacity:.6;cursor:pointer;transition:transform .1s,opacity .15s}
+      .row .n:hover{opacity:1;transform:scale(1.12)}
+      .row .n.on{opacity:1;background:#fff}
+      .row .n.on.solo{border-color:#e74c3c;color:#e74c3c;box-shadow:0 0 4px rgba(231,76,60,.5)}
+      .row .n.on.steal{border-color:#2980b9;color:#2980b9;box-shadow:0 0 4px rgba(41,128,185,.5)}
+      .row .n.on.unsure{border-color:#8e44ad;color:#8e44ad;box-shadow:0 0 4px rgba(142,68,173,.5)}
+      .acts{display:flex;gap:0.5rem}
+      .row button{height:1.9167rem;padding:0 0.9167rem;border:0;border-radius:0.5rem;font-size:1rem;font-weight:bold;cursor:pointer;transition:transform .08s,background .15s,filter .15s}
+      .row .kill{min-width:4.25rem;background:linear-gradient(#58b85c,#3f9d44);color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+      .row .kill:hover{filter:brightness(1.08)}
+      .row .rs{min-width:3.4rem;background:#ece6d6;color:#6b5f4c}
       .row .rs:hover{background:#ddd3bb}
       .row .rs.arm{background:#e02424;color:#fff}
-      .empty{padding:1.5rem 0.5rem;color:#9a8d73;text-align:center;line-height:1.7}
+      .empty{padding:2rem 0.5rem;color:#9a8d73;text-align:center;line-height:1.8;font-size:1rem}
     `;
 
     function computePopoutRows(boss, now) {
@@ -1664,15 +1667,19 @@
           ? rows.map(r => {
               const isAuto = r.mode === 'auto';
               const tip = isAuto ? '自動巡迴（點擊切換為手動）' : (locked ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）');
+              const timeText = r.time2 ? `${r.time}~${r.time2}` : r.time;
               return `<div class="row ${r.cls}${popFlash === r.ch ? ' flash' : ''}">`
+                + `<div class="l1">`
                 + `<span class="mode ${isAuto ? 'auto' : 'manual'}${locked ? ' locked' : ''}" data-act="cycle" data-ch="${r.ch}" title="${tip}">${isAuto ? '自' : '手'}</span>`
-                + `<span class="c">${r.ch} 頻</span>${r.time2 ? `<span class="t rg" title="重生時間區間">${r.time}~${r.time2}</span>` : `<span class="t">${r.time}</span>`}<span class="nt">`
+                + `<span class="c">${r.ch} 頻</span>`
+                + `<span class="t"${r.time2 ? ' title="重生時間區間"' : ''}>${timeText}</span>`
+                + `<span class="cd" data-ch="${r.ch}"></span></div>`
+                + `<div class="l2"><span class="nt">`
                 + `<i class="n solo${r.solo ? ' on' : ''}" data-act="note" data-type="solo" data-ch="${r.ch}" title="獨家發現（點擊切換）">獨</i>`
                 + `<i class="n steal${r.steal ? ' on' : ''}" data-act="note" data-type="steal" data-ch="${r.ch}" title="必須搶奪（點擊切換）">搶</i>`
                 + `<i class="n unsure${r.unsure ? ' on' : ''}" data-act="note" data-type="unsure" data-ch="${r.ch}" title="不確定 / 可能遺失（點擊切換）">?</i></span>`
-                + `<span class="cd" data-ch="${r.ch}"></span>`
-                + `<button type="button" class="kill" data-act="kill" data-ch="${r.ch}">擊殺</button>`
-                + `<button type="button" class="rs" data-act="reset" data-ch="${r.ch}">重置</button></div>`;
+                + `<span class="acts"><button type="button" class="kill" data-act="kill" data-ch="${r.ch}">擊殺</button>`
+                + `<button type="button" class="rs" data-act="reset" data-ch="${r.ch}">重置</button></span></div></div>`;
             }).join('')
           : '<div class="empty">目前沒有計時中的頻道<br>在上方輸入頻道號碼，按「擊殺」開始計時</div>';
         popFlash = null;
@@ -1819,11 +1826,11 @@
       let w = null;
       if (window.documentPictureInPicture) {
         try {
-          w = await window.documentPictureInPicture.requestWindow({ width: 300, height: 200 });
+          w = await window.documentPictureInPicture.requestWindow({ width: 320, height: 340 });
         } catch (e) { w = null; }
       }
       if (!w) {
-        w = window.open('', 'boss-popout', 'popup=yes,width=300,height=200,resizable=yes');
+        w = window.open('', 'boss-popout', 'popup=yes,width=320,height=340,resizable=yes');
         if (!w) { alert("瀏覽器擋住了小視窗，請允許此網站的彈出視窗後再試一次。"); popBoss = null; return; }
         w.document.open();
         w.document.write('<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>');
