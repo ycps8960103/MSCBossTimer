@@ -55,7 +55,7 @@ html:has(body.pip .mini.alert){animation:redglow .45s infinite alternate}
 <div id="app">
   <div class="mini" id="mini"></div>
   <div id="set">
-    <label>Buff 時間（秒）<input type="number" id="dur" min="10" max="3600" step="0.1" value="117.4"></label>
+    <label>Buff 時間（秒）<input type="number" id="dur" min="10" max="3600" step="0.1" value="117.3"></label>
     <label>剩幾秒時提醒<input type="number" id="rem" min="0" max="3600" value="8"></label>
     <label>＋／－ 每次調整（秒）<input type="number" id="step" min="1" max="60" value="1"></label>
     <label>時間到自動重新計時<input type="checkbox" id="auto" checked></label>
@@ -66,7 +66,7 @@ html:has(body.pip .mini.alert){animation:redglow .45s infinite alternate}
 <script>
 const $=id=>document.getElementById(id);
 const MINI='<div class="r"><button data-a="m" title="減少剩餘時間（可按住）">−</button><div class="t"></div><button data-a="p" title="增加剩餘時間（可按住）">＋</button><button data-a="s" title="開始／已吸 Buff 重新計時">▶</button><button data-a="x" title="停止">■</button></div><div class="bar"><div class="f"></div></div><div class="s"></div>';
-let ctx=null,end=0,total=117.4,timer=null,tw=window,W=window,alerted=false,spoken=false,nodes=[],running=false,lastGo=0,holdT=null,holdI=null,hw=null;
+let ctx=null,end=0,total=117.3,timer=null,tw=window,W=window,alerted=false,spoken=false,nodes=[],running=false,lastGo=0,holdT=null,holdI=null,hw=null;
 const views=[];
 function mk(box){const v={box,t:box.querySelector('.t'),f:box.querySelector('.f'),s:box.querySelector('.s')};views.push(v);return v}
 $('mini').innerHTML=MINI;mk($('mini'));
@@ -95,7 +95,7 @@ function stopTicker(){try{tw.clearInterval(timer)}catch(e){}}
 function setTicker(){stopTicker();tw=W;timer=W.setInterval(tick,200)}
 function start(auto){
   save();
-  total=Math.max(10,+$('dur').value||117.4);
+  total=Math.max(10,+$('dur').value||117.3);
   clearSched();
   const now=Date.now(),nx=end+total*1000;
   // 自動循環時以「上一輪的結束時間」為基準往後加，避免每輪累積延遲
@@ -143,7 +143,7 @@ function tick(){
 function reset(){
   stopTicker();clearSched();running=false;alerted=false;
   document.title='楓之谷祈禱提醒';
-  paint(v=>{v.box.classList.remove('alert');v.t.textContent=fmt(+$('dur').value||117.4);v.f.style.width='0';v.s.textContent='按▶開始'});
+  paint(v=>{v.box.classList.remove('alert');v.t.textContent=fmt(+$('dur').value||117.3);v.f.style.width='0';v.s.textContent='按▶開始'});
 }
 function tap(e){
   const b=e.target.closest&&e.target.closest('button');
