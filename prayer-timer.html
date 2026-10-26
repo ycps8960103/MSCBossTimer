@@ -31,6 +31,7 @@ html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans 
 #set{margin-top:12px;font-size:13px;color:var(--mut)}
 #set label{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
 input[type=number]{width:70px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit}
+select{max-width:170px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit}
 .row{display:flex;gap:8px;margin-top:10px}
 .row button{flex:1;padding:8px 6px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:13px;cursor:pointer}
 .mini button{border:1px solid var(--line);background:var(--card);color:var(--ink);font-family:inherit;cursor:pointer;transition:transform .08s,filter .15s}
@@ -57,10 +58,11 @@ html:has(body.pip .mini.alert){animation:redglow .45s infinite alternate}
   <div id="set">
     <label>Buff 時間（秒）<input type="number" id="dur" min="10" max="3600" step="0.1" value="117.3"></label>
     <label>剩幾秒時提醒<input type="number" id="rem" min="0" max="3600" value="8"></label>
+    <label>提醒音效<select id="snd"><option value="voice">語音（剩餘 X 秒鐘）</option><option value="bell">鈴聲</option><option value="scream">尖叫</option></select></label>
     <label>＋／－ 每次調整（秒）<input type="number" id="step" min="1" max="60" value="1"></label>
     <label>時間到自動重新計時<input type="checkbox" id="auto" checked></label>
-    <div class="row"><button id="test">測試語音</button><button id="pip">懸浮小視窗</button></div>
-    <div class="hint">▶ 開始／已吸 Buff 重新計時，■ 停止，按住 －／＋ 可連續增減剩餘秒數。點時間處或按空白鍵＝開始／重新計時。提醒時會唸「剩餘 X 秒鐘」。</div>
+    <div class="row"><button id="test">測試音效</button><button id="pip">懸浮小視窗</button></div>
+    <div class="hint">▶ 開始／已吸 Buff 重新計時，■ 停止，按住 －／＋ 可連續增減剩餘秒數。點時間處或按空白鍵＝開始／重新計時。提醒時依所選音效播放（語音會唸「剩餘 X 秒鐘」）。</div>
   </div>
 </div>
 <script>
@@ -71,15 +73,45 @@ const views=[];
 function mk(box){const v={box,t:box.querySelector('.t'),f:box.querySelector('.f'),s:box.querySelector('.s')};views.push(v);return v}
 $('mini').innerHTML=MINI;mk($('mini'));
 const paint=fn=>views.forEach(fn);
-try{const s=JSON.parse(localStorage.getItem('prayer5')||'{}');if(s.dur)$('dur').value=s.dur;if(s.rem!=null)$('rem').value=s.rem;if(s.step)$('step').value=s.step;if(s.auto!=null)$('auto').checked=s.auto}catch(e){}
-function save(){try{localStorage.setItem('prayer5',JSON.stringify({dur:$('dur').value,rem:$('rem').value,step:$('step').value,auto:$('auto').checked}))}catch(e){}}
+try{const s=JSON.parse(localStorage.getItem('prayer6')||'{}');if(s.dur)$('dur').value=s.dur;if(s.rem!=null)$('rem').value=s.rem;if(s.step)$('step').value=s.step;if(s.snd)$('snd').value=s.snd;if(s.auto!=null)$('auto').checked=s.auto}catch(e){}
+function save(){try{localStorage.setItem('prayer6',JSON.stringify({dur:$('dur').value,rem:$('rem').value,step:$('step').value,snd:$('snd').value,auto:$('auto').checked}))}catch(e){}}
 function fmt(s){s=Math.max(0,Math.ceil(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 function audio(){if(!ctx)ctx=new (window.AudioContext||window.webkitAudioContext)();if(ctx.state==='suspended')ctx.resume();return ctx}
 function speak(t){
   try{if(!('speechSynthesis' in window))return;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='zh-TW';u.rate=1.05;speechSynthesis.speak(u)}catch(e){}
 }
 function remText(){const r=Math.max(0,+$('rem').value||0);return r>0?'剩餘'+r+'秒鐘':'時間到'}
-function say(){if(spoken)return;spoken=true;speak(remText())}
+function bell(){
+  const c=audio(),t0=c.currentTime+0.02;
+  [[0,1319],[0.28,1568],[0.56,2093],[1.2,1319],[1.48,1568],[1.76,2093]].forEach(([o,f])=>{
+    [[1,0.30],[2.76,0.12]].forEach(([m,a])=>{
+      const osc=c.createOscillator(),g=c.createGain(),t=t0+o;
+      osc.type='sine';osc.frequency.value=f*m;
+      g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(a,t+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+0.9);
+      osc.connect(g).connect(c.destination);osc.start(t);osc.stop(t+0.95);
+    });
+  });
+}
+// 用振盪器合成的尖叫聲：音高快速拉高、帶顫音與破音
+function scream(){
+  const c=audio(),t=c.currentTime+0.02,D=1.3;
+  const mix=c.createGain(),sh=c.createWaveShaper(),bp=c.createBiquadFilter(),env=c.createGain();
+  const n=256,cv=new Float32Array(n);for(let i=0;i<n;i++){const x=i*2/n-1;cv[i]=Math.tanh(x*6)}
+  sh.curve=cv;bp.type='bandpass';bp.frequency.value=2000;bp.Q.value=0.7;
+  env.gain.setValueAtTime(0.0001,t);env.gain.exponentialRampToValueAtTime(0.28,t+0.04);env.gain.setValueAtTime(0.28,t+D-0.25);env.gain.exponentialRampToValueAtTime(0.0001,t+D);
+  mix.connect(sh);sh.connect(bp);bp.connect(env);env.connect(c.destination);
+  [[1,'sawtooth'],[1.5,'square']].forEach(([m,type],i)=>{
+    const o=c.createOscillator(),g=c.createGain();o.type=type;g.gain.value=i?0.35:0.7;
+    o.frequency.setValueAtTime(600*m,t);
+    o.frequency.exponentialRampToValueAtTime(1900*m,t+0.22);
+    o.frequency.linearRampToValueAtTime(1500*m,t+0.8);
+    o.frequency.exponentialRampToValueAtTime(900*m,t+D);
+    const l=c.createOscillator(),lg=c.createGain();l.frequency.value=11;lg.gain.value=110*m;l.connect(lg).connect(o.frequency);
+    o.connect(g).connect(mix);o.start(t);o.stop(t+D+0.05);l.start(t);l.stop(t+D+0.05);
+  });
+}
+function playAlert(){const k=$('snd').value;if(k==='bell')bell();else if(k==='scream')scream();else speak(remText())}
+function say(){if(spoken)return;spoken=true;playAlert()}
 function sched(at,fn){
   const c=audio(),o=c.createOscillator(),g=c.createGain();g.gain.value=0;
   o.connect(g).connect(c.destination);o.onended=fn;o.start();o.stop(c.currentTime+Math.max(0.01,at));nodes.push(o);
@@ -155,9 +187,9 @@ function tap(e){
 }
 $('mini').addEventListener('pointerdown',tap);
 bindStop(window);
-$('test').onclick=()=>{try{audio()}catch(e){}speak(remText())};
+$('test').onclick=()=>{try{audio()}catch(e){}playAlert()};
 $('dur').onchange=()=>{save();if(!running)reset()};
-$('rem').onchange=save;$('step').onchange=save;$('auto').onchange=save;
+$('rem').onchange=save;$('step').onchange=save;$('snd').onchange=save;$('auto').onchange=save;
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&e.target.tagName!=='INPUT'){e.preventDefault();go()}});
 // 在另一個視窗（置頂小視窗或一般彈出視窗）內重新建立一份小計時器
 function attachFloat(w,cls){
