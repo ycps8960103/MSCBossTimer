@@ -283,6 +283,17 @@
     .online-row .meta { font-size: 0.75rem; color: #8a7d66; white-space: nowrap; }
     .online-row.me { background: #fff8e1; }
     .online-empty { padding: 1rem; text-align: center; color: #8a7d66; font-size: 0.875rem; }
+    /* 聯盟共享 */
+    .btn-share { background: linear-gradient(#e0a526, #bf8610); }
+    .share-tag { font-style: normal; font-size: 0.625rem; font-weight: bold; color: #fff; background: #e0a526; border-radius: 0.5rem; padding: 0 0.3rem; margin-left: 0.25rem; vertical-align: middle; }
+    .boss-item.active .share-tag { background: var(--gold); color: #4a3519; }
+    .share-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.75rem; max-height: 14rem; overflow-y: auto; padding: 0.5rem 0.625rem; background: #fff; border: 1px solid var(--line); border-radius: 0.5rem; }
+    .share-row { display: flex; align-items: center; gap: 0.375rem; font-size: 0.875rem; cursor: pointer; margin: 0; font-weight: normal !important; }
+    .share-hint { margin-top: 0.3125rem; font-size: 0.75rem; color: #8a7d66; line-height: 1.5; }
+    /* 盟友版：隱藏所有管理功能 */
+    .ally-mode .btn-cd, .ally-mode .btn-admin, .ally-mode .btn-share, .ally-mode .btn-discord-set,
+    .ally-mode #discord-toggle-btn, .ally-mode #online-btn, .ally-mode #cycle-switch,
+    .ally-mode .header-btns .btn-ch.reset { display: none !important; }
     .range-row { display: flex; align-items: center; gap: 0.5rem; }
     .range-row input { flex: 1; min-width: 0; }
     .range-hint { margin-top: 0.3125rem; font-size: 0.75rem; color: #8a7d66; line-height: 1.5; }
@@ -312,8 +323,9 @@
     <div class="tools-area">
       <button type="button" class="btn-tool btn-fix" onclick="openFixTimeModal()">⏱️ 修正時間</button>
       <button type="button" class="btn-tool btn-cd" onclick="openBossCdModal()">⚙️ 冷卻設定</button>
-      <button type="button" class="btn-tool" onclick="openDiscordModal()">Discord 設定</button>
+      <button type="button" class="btn-tool btn-discord-set" onclick="openDiscordModal()">Discord 設定</button>
       <button type="button" id="discord-toggle-btn" class="btn-tool" onclick="toggleDiscordEnabled()">🔔 通知：開</button>
+      <button type="button" class="btn-tool btn-share" onclick="openShareModal()">🤝 聯盟共享</button>
       <button type="button" class="btn-tool btn-admin" onclick="openPasswordModal()">變更密碼</button>
       <button type="button" class="btn-tool btn-logout" style="grid-column: span 2;" onclick="logout()">🔒 鎖定</button>
     </div>
@@ -358,6 +370,30 @@
         </div>
       </div>
       <div id="channel-grid"></div>
+    </div>
+  </div>
+
+  <!-- 聯盟共享設定彈窗（權限限 Admin） -->
+  <div id="shareModal" class="modal">
+    <div class="modal-content">
+      <h3>🤝 聯盟共享設定</h3>
+      <div class="form-group">
+        <label>最大權限者金鑰 (Admin Key)</label>
+        <input type="password" id="shareAdminKey" placeholder="請輸入金鑰">
+      </div>
+      <div class="form-group">
+        <label>分享給聯盟的野王（勾選 = 盟友可查看與操作）</label>
+        <div id="shareBossList" class="share-list"></div>
+        <div class="share-hint">盟友只能看到並操作被勾選的野王，其他野王的資料、密碼、Webhook 都看不到。取消勾選後立即生效。</div>
+      </div>
+      <div class="form-group">
+        <label>聯盟密碼（留空 = 不變更；至少 8 個字元）</label>
+        <input type="password" id="shareAllyPass" placeholder="給盟友使用的密碼，請與公會密碼不同">
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-save" onclick="saveShareSettings()">儲存聯盟共享設定</button>
+        <button type="button" class="btn-close" onclick="closeShareModal()">取消</button>
+      </div>
     </div>
   </div>
 
@@ -495,6 +531,10 @@
     // ==========================================
     const APP_VERSION = "ver.20261024.01";
 
+    // 聯盟版旗標：index.html（公會版）為 false；ally.html（盟友版）由同一份程式產生，此值為 true。
+    // 盟友版只能看到「已分享」的野王，且拿不到 Webhook、不能改任何管理設定。
+    const ALLY_MODE = false;
+
     // 【必填】apiKey 請到 Firebase Console → 專案設定（齒輪）→ 一般 → 您的應用程式 → 網頁應用程式 → SDK 設定與配置，
     // 複製 apiKey 貼到下方引號內（沒有網頁應用程式的話，先按「新增應用程式」建立一個）。
     const firebaseConfig = {
@@ -537,6 +577,7 @@
     });
 
     const roomId = "啾察隊";
+    const UNLOCK_KEY = ALLY_MODE ? `unlocked_ally_${roomId}` : `unlocked_${roomId}`; // 盟友版與公會版的解鎖狀態分開記錄
     // Webhook 不再寫在程式碼裡：通過密碼驗證後，才從資料庫 rooms/<小隊>/discordWebhook 讀取
     let DEFAULT_WEBHOOK_URL = "";
 
@@ -622,7 +663,7 @@
     }
 
     function checkFogAuth() {
-      const isUnlocked = sessionStorage.getItem(`unlocked_${roomId}`);
+      const isUnlocked = sessionStorage.getItem(UNLOCK_KEY);
       if (isUnlocked === 'true') {
         document.getElementById('fog-overlay').style.display = 'none';
       } else {
@@ -652,10 +693,10 @@
 
       // 密碼不再下載到瀏覽器比對：把輸入的密碼寫入 members/<小隊>/<uid>，
       // 由資料庫安全規則在伺服器端判斷是否與 secrets 內的密碼相同。
-      authReady.then(user => db.ref(`members/${roomId}/${user.uid}`).set(pwd)).then(() => {
+      authReady.then(user => db.ref(`${ALLY_MODE ? 'allies' : 'members'}/${roomId}/${user.uid}`).set(pwd)).then(() => {
         myNick = nick;
         try { localStorage.setItem('boss_nickname', nick); } catch (e) {}
-        sessionStorage.setItem(`unlocked_${roomId}`, 'true');
+        sessionStorage.setItem(UNLOCK_KEY, 'true');
         checkFogAuth();
         listenToFirebase();
         updatePresenceName(); // 若本次是改用新暱稱重新登入，同步更新線上名單
@@ -684,10 +725,11 @@
     }
 
     function logout() {
-      sessionStorage.removeItem(`unlocked_${roomId}`);
+      sessionStorage.removeItem(UNLOCK_KEY);
       stopPresence();
       db.ref(`rooms/${roomId}`).off();
-      authReady.then(user => db.ref(`members/${roomId}/${user.uid}`).remove()).catch(() => {});
+      authReady.then(user => db.ref(`${ALLY_MODE ? 'allies' : 'members'}/${roomId}/${user.uid}`).remove()).catch(() => {});
+      if (ALLY_MODE) stopAllyListeners();
       checkFogAuth();
     }
 
@@ -921,7 +963,7 @@
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
       const bossSelect = document.getElementById('fixBossSelect');
       bossSelect.innerHTML = '';
-      bosses.forEach(b => {
+      visibleBosses().forEach(b => {
         const opt = document.createElement('option');
         opt.value = b.id;
         opt.innerText = b.name;
@@ -1041,7 +1083,8 @@
 
     function listenToFirebase() {
       // 未通過密碼驗證前不連線讀取資料（資料庫規則也會擋）
-      if (sessionStorage.getItem(`unlocked_${roomId}`) !== 'true') return;
+      if (sessionStorage.getItem(UNLOCK_KEY) !== 'true') return;
+      if (ALLY_MODE) { listenAlly(); return; }
       startPresence();
       authReady.then(() => {
         db.ref(`rooms/${roomId}`).off();
@@ -1069,14 +1112,14 @@
     function initSidebar() {
       const listEl = document.getElementById('boss-list');
       listEl.innerHTML = '';
-      bosses.forEach(boss => {
+      visibleBosses().forEach(boss => {
         const div = document.createElement('div');
         div.className = `boss-item ${boss.id === currentBoss.id ? 'active' : ''}`;
         const timeText = boss.minMin === boss.maxMin ? `${boss.minMin}分` : `${boss.minMin}~${boss.maxMin}分`;
         const cdSec = getBossCdSec(boss.id);
         
         div.innerHTML = `
-          <span class="boss-name">${boss.name}</span>
+          <span class="boss-name">${boss.name}${(!ALLY_MODE && timerCache.sharedBosses && timerCache.sharedBosses[boss.id]) ? '<i class="share-tag" title="已分享給聯盟">聯</i>' : ''}</span>
           <div class="boss-info-group"><span class="boss-time-tag">${timeText}</span><span class="boss-cd-tag">+${cdSec}s</span></div>
           <div class="boss-badges" data-boss-id="${boss.id}">
             <i class="boss-badge red" title="即將重生"></i>
@@ -1137,7 +1180,7 @@
       currentBoss = boss;
       document.getElementById('current-boss-name').innerHTML = `
         ${boss.name} 
-        <span id="room-display" class="room-badge">小隊: ${roomId}</span>
+        <span id="room-display" class="room-badge">${ALLY_MODE ? '聯盟共享' : `小隊: ${roomId}`}</span>
         <span id="version-display" class="version-badge">${APP_VERSION}</span>
       `;
       refreshBossHeaderInfo();
@@ -1182,16 +1225,23 @@
       const targetRef = db.ref(`rooms/${roomId}/${bossId}/ch${ch}`);
 
       if (!newData || (!newData.killTime && !newData.isSolo && !newData.isSteal && !newData.isUnsure && !newData.playerCdStartTime)) {
-        targetRef.remove().catch(err => {
-          alert("操作失敗：您的程式版本過舊，已被伺服器拒絕寫入！");
-        });
+        targetRef.remove().catch(writeFailed);
       } else {
         targetRef.set({
           ...newData,
           appVersion: APP_VERSION
-        }).catch(err => {
-          alert("操作失敗：您的程式版本過舊，已被伺服器拒絕寫入！");
-        });
+        }).catch(writeFailed);
+      }
+    }
+
+    // 寫入失敗的提示：區分「權限失效」與其他原因（以前一律誤報成版本過舊）
+    function writeFailed(err) {
+      if (isPermissionDenied(err)) {
+        alert(ALLY_MODE
+          ? "寫入被拒絕：聯盟密碼可能已被變更，或這隻野王已不再分享。請重新整理頁面，並重新輸入聯盟密碼。"
+          : "寫入被拒絕：小隊密碼可能已被變更。請重新整理頁面，並重新輸入新密碼。");
+      } else {
+        alert("操作失敗：請檢查網路連線後再試一次。");
       }
     }
 
@@ -1241,6 +1291,7 @@
       delete notifiedState[`${boss.id}_${ch}_min`];
       delete notifiedState[`${boss.id}_${ch}_max`];
       
+      if (ALLY_MODE) { pushAllyKillEvent(boss, ch); return; } // 盟友沒有 Webhook：改寫入待發送區，由公會端發到公會 Discord
       if (discordConfig.kill) {
         const autoText = isAuto ? "【自動重新計時】" : "";
         sendDiscordMsg(`⚔️ **【擊殺紀錄】** [${roomId}] **${killerName()}** 擊殺了 ${boss.name} - ${ch} 頻 ${autoText}`.trim());
@@ -1369,6 +1420,7 @@
       });
       pruneNotified(now);
       updateSidebarBadges();
+      processOutbox();
     }
 
     // 每秒執行一次：掃描一定會做（通知不能停），畫面只在分頁可見時才更新
@@ -1760,6 +1812,7 @@
         <div class="add"><input id="pch" type="number" min="1" max="60" placeholder="頻道"><button type="button" id="pk">擊殺</button></div>
         <div class="list" id="pl"></div>`;
       doc.getElementById('ph').textContent = popBoss.name;
+      if (ALLY_MODE) doc.querySelector('.seg').style.display = 'none'; // 盟友不能全體切換巡迴模式
 
       const input = doc.getElementById('pch');
       const addKill = () => {
@@ -1805,7 +1858,7 @@
 
     async function openPopout() {
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
-      if (sessionStorage.getItem(`unlocked_${roomId}`) !== 'true') { alert("請先解鎖計時區！"); return; }
+      if (sessionStorage.getItem(UNLOCK_KEY) !== 'true') { alert("請先解鎖計時區！"); return; }
 
       // 已開啟：直接改為目前這隻王，不重開視窗
       if (popWin && !popWin.closed) {
@@ -1838,9 +1891,13 @@
 
     // 擊殺者名稱：使用登入時輸入的暱稱 / ID（尚未設定時以「訪客＋編號」代替）。
     // 暱稱是使用者自己輸入的內容：跳脫 Discord 的格式符號，並把 @ 後面插入零寬空白，避免被當成標記他人。
-    function killerName() {
-      const raw = myNick || (myUid ? `訪客${String(myUid).slice(0, 4)}` : '有人');
+    // 把暱稱轉成可安全放進 Discord 訊息的文字（跳脫格式符號、讓 @ 不會真的提及任何人）
+    function escapeDiscord(raw) {
       return String(raw).replace(/([\\*_~`|>:#\[\]()])/g, '\\$1').replace(/@/g, '@\u200b');
+    }
+
+    function killerName() {
+      return escapeDiscord(myNick || (myUid ? `訪客${String(myUid).slice(0, 4)}` : '有人'));
     }
 
     function postToDiscord(url, content, onFail) {
@@ -1963,7 +2020,7 @@
     }
 
     function startPresence() {
-      if (presenceStarted) return;
+      if (ALLY_MODE || presenceStarted) return; // 盟友版不使用線上人員名單
       presenceStarted = true;
       authReady.then(user => {
         if (!presenceStarted) return;
@@ -2144,6 +2201,189 @@
       btn.textContent = ok ? `已複製 ${rows.length} 筆` : '複製失敗';
       copyBtnTimer = setTimeout(() => { btn.textContent = '複製記錄'; }, 1600);
       if (!ok) alert("瀏覽器不允許複製，請改用 https 網址開啟，或手動選取內容複製。");
+    }
+
+    /* ==========================================
+       聯盟共享
+       - 公會版（index.html）：管理員可勾選要分享給聯盟的野王（sharedBosses），並設定聯盟密碼。
+         盟友在 ally.html 輸入「聯盟密碼」登入，只能讀寫被勾選的野王（資料庫規則在伺服器端強制）。
+       - 盟友按「擊殺」時，因為拿不到 Webhook，改寫入 rooms/<小隊>/outbox；
+         公會端網頁（或 Cloudflare Worker）看到後，以「搶發送權」方式只發一則到公會的 Discord。
+    ========================================== */
+    function visibleBosses() {
+      if (!ALLY_MODE) return bosses;
+      const shared = (timerCache && timerCache.sharedBosses) || {};
+      return bosses.filter(b => shared[b.id]);
+    }
+
+    function openShareModal() {
+      if (ALLY_MODE) return;
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      document.getElementById('shareAdminKey').value = '';
+      document.getElementById('shareAllyPass').value = '';
+      const shared = (timerCache && timerCache.sharedBosses) || {};
+      const box = document.getElementById('shareBossList');
+      box.innerHTML = '';
+      bosses.forEach(b => {
+        const row = document.createElement('label');
+        row.className = 'share-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = b.id;
+        cb.checked = !!shared[b.id];
+        const name = document.createElement('span');
+        name.textContent = b.name;
+        row.appendChild(cb);
+        row.appendChild(name);
+        box.appendChild(row);
+      });
+      document.getElementById('shareModal').style.display = 'flex';
+    }
+
+    function closeShareModal() {
+      document.getElementById('shareModal').style.display = 'none';
+    }
+
+    function saveShareSettings() {
+      if (ALLY_MODE || !isVersionValid) return;
+      const adminKey = document.getElementById('shareAdminKey').value.trim();
+      if (!adminKey) { alert("請輸入管理員金鑰！"); return; }
+      const pass = document.getElementById('shareAllyPass').value.trim();
+      if (pass && pass.length < 8) { alert("聯盟密碼至少需要 8 個字元！"); return; }
+      const ids = Array.from(document.querySelectorAll('#shareBossList input:checked')).map(i => i.value);
+      const obj = {};
+      ids.forEach(id => { obj[id] = true; });
+
+      withAdmin(adminKey, () => Promise.all([
+        db.ref(`rooms/${roomId}/sharedBosses`).set(ids.length ? obj : null),
+        pass ? db.ref(`secrets/${roomId}/allyPassword`).set(pass) : Promise.resolve()
+      ])).then(() => {
+        alert(`已更新聯盟共享：目前共分享 ${ids.length} 隻野王${pass ? '，聯盟密碼已更新' : ''}。`);
+        closeShareModal();
+      }).catch(err => {
+        if (err && err.stage === 'key') alert("【權限不足】管理者金鑰錯誤！");
+        else alert("寫入資料庫失敗，請確認資料庫規則已更新後重試！");
+      });
+    }
+
+    // ---- 盟友版：只監聽被分享的野王 ----
+    let allyData = { sharedBosses: {}, bossCdSettings: {}, bossRangeSettings: {}, bossCycleSettings: {} };
+    let allyBossRefs = {};
+    let allyRenderTimer = null;
+    const ALLY_SETTING_KEYS = ['sharedBosses', 'bossCdSettings', 'bossRangeSettings', 'bossCycleSettings'];
+
+    function scheduleAllyRender() {
+      if (allyRenderTimer) return;
+      allyRenderTimer = setTimeout(() => {
+        allyRenderTimer = null;
+        ALLY_SETTING_KEYS.forEach(k => { timerCache[k] = allyData[k]; });
+        bossCdCache = allyData.bossCdSettings;
+        bossCycleCache = allyData.bossCycleSettings;
+        bossRangeCache = allyData.bossRangeSettings;
+        applyBossOverrides();
+        const vis = visibleBosses();
+        if (vis.length && vis.indexOf(currentBoss) === -1) { selectBoss(vis[0]); }
+        refreshBossHeaderInfo();
+        updateCycleSwitch();
+        scanAllBosses();
+        initSidebar();
+        renderChannels();
+        updatePopout();
+      }, 30);
+    }
+
+    function syncAllyBossListeners() {
+      const shared = allyData.sharedBosses || {};
+      Object.keys(allyBossRefs).forEach(id => {
+        if (!shared[id]) { allyBossRefs[id].off(); delete allyBossRefs[id]; delete timerCache[id]; }
+      });
+      Object.keys(shared).forEach(id => {
+        if (!shared[id] || allyBossRefs[id]) return;
+        const ref = db.ref(`rooms/${roomId}/${id}`);
+        allyBossRefs[id] = ref;
+        ref.on('value', snap => { timerCache[id] = snap.val() || {}; scheduleAllyRender(); }, () => { /* 已取消分享 */ });
+      });
+    }
+
+    function listenAlly() {
+      authReady.then(() => {
+        ALLY_SETTING_KEYS.forEach(k => {
+          const ref = db.ref(`rooms/${roomId}/${k}`);
+          ref.off();
+          ref.on('value', snap => {
+            allyData[k] = snap.val() || {};
+            if (k === 'sharedBosses') syncAllyBossListeners();
+            scheduleAllyRender();
+          }, () => { logout(); }); // 聯盟密碼已變更或權限失效
+        });
+      }).catch(() => {});
+    }
+
+    function stopAllyListeners() {
+      Object.keys(allyBossRefs).forEach(id => { try { allyBossRefs[id].off(); } catch (e) {} });
+      allyBossRefs = {};
+      ALLY_SETTING_KEYS.forEach(k => { try { db.ref(`rooms/${roomId}/${k}`).off(); } catch (e) {} });
+      timerCache = {};
+    }
+
+    // ---- 盟友擊殺 → 待發送區（outbox） ----
+    function pushAllyKillEvent(boss, ch) {
+      db.ref(`rooms/${roomId}/outbox`).push({
+        boss: boss.id,
+        ch: ch,
+        by: sanitizeNick(myNick) || '盟友',
+        ts: firebase.database.ServerValue.TIMESTAMP
+      }).catch(() => {});
+    }
+
+    // ---- 公會端：處理盟友的擊殺通知（與 Worker 共用 outbox_<id> 發送權代號，只會發一則） ----
+    let lastOutboxPrune = 0;
+    function buildAllyKillText(ev) {
+      const boss = bosses.find(b => b.id === ev.boss);
+      const ch = parseInt(ev.ch, 10);
+      if (!boss || !(ch >= 1 && ch <= 60)) return null;
+      const by = sanitizeNick(ev.by) || '盟友';
+      return `⚔️ **【擊殺紀錄】** [${roomId}] 【聯盟】**${escapeDiscord(by)}** 擊殺了 ${boss.name} - ${ch} 頻`;
+    }
+
+    function processOutbox() {
+      if (ALLY_MODE) return;
+      const box = timerCache && timerCache.outbox;
+      if (!box) return;
+      const now = Date.now();
+      let handled = 0;
+      Object.keys(box).forEach(id => {
+        const ev = box[id];
+        if (!ev || typeof ev.ts !== 'number') return;
+        if (now - ev.ts > 10 * 60 * 1000) return;           // 太舊的不補發
+        if (!discordConfig.enabled || !discordConfig.kill) return; // 這台關閉擊殺通知就不去搶發送權
+        const key = `outbox_${id}`;
+        if (notifiedState[key]) return;
+        if (handled >= 10) return;                           // 每秒最多處理 10 則，避免被灌爆
+        const text = buildAllyKillText(ev);
+        if (!text) return;
+        handled++;
+        markNotified(key, () => sendDiscordMsg(text, key));
+      });
+      // 清掉超過 6 小時的紀錄
+      if (now - lastOutboxPrune > 60 * 1000) {
+        lastOutboxPrune = now;
+        const upd = {};
+        Object.keys(box).forEach(id => {
+          if (!box[id] || typeof box[id].ts !== 'number' || box[id].ts < now - 6 * 60 * 60 * 1000) upd[id] = null;
+        });
+        if (Object.keys(upd).length) db.ref(`rooms/${roomId}/outbox`).update(upd).catch(() => {});
+      }
+    }
+
+    // 盟友版：調整畫面文字
+    if (ALLY_MODE) {
+      document.body.classList.add('ally-mode');
+      document.title = '楓之谷 Boss 計時器（聯盟共享版）';
+      const fogP = document.querySelector('#fog-overlay .fog-box p');
+      if (fogP) fogP.textContent = '請輸入暱稱 / ID 與聯盟密碼解鎖內容';
+      const rd = document.getElementById('room-display');
+      if (rd) rd.textContent = '聯盟共享';
     }
 
     // 初始化流程

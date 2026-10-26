@@ -1,0 +1,2398 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>楓之谷 Boss 計時器 (啾察隊專用版 ver.20261024.01)</title>
+  
+  <!-- 引入 Firebase SDK (版本 9.x 兼容模式) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+
+  <style>
+    /* 整體比例：以視窗大小決定基準字級（取寬、高中較小者），所有尺寸皆用 rem，會隨視窗縮放一起放大縮小 */
+    html { font-size: clamp(11px, min(1.1vw, 2vh), 24px); }
+    :root {
+      --brown-1: #5c4327; --brown-2: #7d5c36; --gold: #f3c969; --cream: #fff8eb; --paper: #f4eee0;
+      --line: #e4dccb; --ink: #3a3226; --green: #16a34a; --red: #e02424; --teal: #1abc9c;
+      --shadow-s: 0 1px 0.1875rem rgba(60, 40, 10, 0.10); --shadow-m: 0 0.25rem 0.75rem rgba(60, 40, 10, 0.18);
+    }
+    * { box-sizing: border-box; font-family: "Microsoft JhengHei", "Segoe UI", sans-serif; margin: 0; padding: 0; }
+    body { display: flex; height: 100vh; background: var(--paper); color: var(--ink); overflow: hidden; }
+    button { transition: transform 0.08s, filter 0.15s, background 0.15s, box-shadow 0.15s; }
+    button:active:not(:disabled) { transform: scale(0.97); }
+
+    /* 左側邊欄整體 */
+    #sidebar {
+      width: 13.75rem;
+      background: linear-gradient(180deg, var(--cream), #f8f0de);
+      border-right: 1px solid var(--line);
+      box-shadow: 2px 0 0.5rem rgba(60, 40, 10, 0.06);
+      padding: 0.625rem 0.5rem 0.5rem 0.5rem;
+      display: flex;
+      flex-direction: column;
+      z-index: 10;
+    }
+    #sidebar h2 {
+      font-size: 0.9375rem; margin-bottom: 0.625rem; text-align: center; color: #fff; font-weight: bold; letter-spacing: 1px;
+      padding: 0.5rem 0; border-radius: 0.5rem; background: linear-gradient(135deg, var(--brown-1), var(--brown-2));
+      box-shadow: var(--shadow-s);
+    }
+
+    /* Boss 列表獨立滾動區 */
+    .boss-list-container { flex: 1; overflow-y: auto; padding: 2px 0.25rem 2px 2px; }
+    .boss-list-container::-webkit-scrollbar { width: 0.3125rem; }
+    .boss-list-container::-webkit-scrollbar-thumb { background: #cbbf9f; border-radius: 0.1875rem; }
+    .boss-list-container::-webkit-scrollbar-track { background: transparent; }
+
+    /* 單一 Boss 方塊 */
+    .boss-item {
+      padding: 0.4375rem 0.5625rem;
+      background: #fff;
+      margin-bottom: 0.375rem;
+      border: 1px solid var(--line);
+      border-radius: 0.5rem;
+      box-shadow: var(--shadow-s);
+      cursor: pointer;
+      font-size: 0.8125rem;
+      transition: transform 0.12s, box-shadow 0.12s, background 0.15s, border-color 0.15s;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .boss-item:hover { background: #f6ecd7; border-color: #c9ad7d; transform: translateX(2px); }
+    .boss-item.active {
+      background: linear-gradient(135deg, var(--brown-1), var(--brown-2)); color: #fff; border-color: var(--brown-1);
+      font-weight: bold; box-shadow: 0 2px 0.5rem rgba(92, 67, 39, 0.4); transform: none;
+    }
+
+    /* 右側時間與冷卻秒數群組 */
+    .boss-item .boss-info-group { display: flex; flex-direction: row; align-items: baseline; gap: 0.1875rem; white-space: nowrap; flex: 0 0 auto; }
+    .boss-item .boss-time-tag { font-size: 0.6875rem; color: #8a7d66; font-weight: normal; }
+    .boss-item .boss-cd-tag { font-size: 0.6875rem; color: #d35400; font-weight: bold; }
+    .boss-item.active .boss-time-tag { color: #e8dcc4; }
+    .boss-item.active .boss-cd-tag { color: var(--gold); }
+    .boss-item .boss-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+
+    /* 右側小計圓圈：紅 = 即將重生，綠 = 計時中（數量為 0 時隱藏，不佔空間） */
+    .boss-item .boss-badges { display: flex; gap: 2px; margin-left: 0.1875rem; flex: 0 0 auto; }
+    .boss-item .boss-badge {
+      display: none;
+      min-width: 1rem; height: 1rem; padding: 0 0.1875rem;
+      border-radius: 0.5rem;
+      font-size: 0.625rem; line-height: 1rem; text-align: center;
+      color: #fff; font-weight: bold; font-style: normal;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+    }
+    .boss-item .boss-badge.show { display: inline-block; }
+    .boss-item .boss-badge.red { background: var(--red); }
+    .boss-item .boss-badge.green { background: var(--green); }
+
+    /* 底部工具區 (網格) */
+    .tools-area {
+      border-top: 1px solid var(--line);
+      padding-top: 0.5625rem;
+      margin-top: 0.375rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.375rem;
+    }
+    .btn-tool {
+      width: 100%;
+      padding: 0.4375rem 0.25rem;
+      background: linear-gradient(#6b86a0, #4f6a85);
+      color: white;
+      border: none;
+      border-radius: 0.4375rem;
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-weight: bold;
+      text-align: center;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+    }
+    .btn-tool:hover { filter: brightness(1.1); }
+    .btn-fix { background: linear-gradient(#f0933f, #d9731a); }
+    .btn-admin { background: linear-gradient(#a45bc2, #823a9f); }
+    .btn-cd { background: linear-gradient(#3dc176, #22a05a); }
+    .btn-logout { background: linear-gradient(#d9594a, #b8372a); }
+    .btn-tool.off { background: linear-gradient(#9aa5a8, #7f8c8d); }
+
+    /* 右側主要內容 */
+    #main { flex: 1; padding: 0.75rem 1rem; display: flex; flex-direction: column; height: 100vh; position: relative; min-width: 0; }
+    .header {
+      background: linear-gradient(135deg, var(--brown-1), var(--brown-2)); color: #fff;
+      padding: 0.625rem 1.125rem; border-radius: 0.75rem; margin-bottom: 0.625rem;
+      box-shadow: 0 0.1875rem 0.625rem rgba(92, 67, 39, 0.28);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .header h1 { font-size: 1.375rem; color: #fff; display: flex; align-items: center; gap: 0.5rem; letter-spacing: 0.5px; }
+    .header p { font-size: 0.8125rem; color: #e8dcc4; margin-top: 0.1875rem; }
+
+    .room-badge { background: var(--gold); color: #4a3519; padding: 2px 0.5625rem; border-radius: 0.75rem; font-size: 0.75rem; font-weight: bold; }
+    .version-badge { background: rgba(255, 255, 255, 0.18); color: #fff; padding: 2px 0.5625rem; border-radius: 0.75rem; font-size: 0.75rem; font-weight: bold; }
+    .header-btns { display: flex; gap: 0.5rem; align-items: center; }
+    .header-btns .btn-tool, .header-btns .btn-ch { margin: 0; padding: 0.4375rem 0.8125rem; width: auto; font-size: 0.8125rem; border-radius: 0.4375rem; }
+    .btn-copy { background: linear-gradient(#2ec4b6, #1a9d90); }
+    .btn-popout { background: linear-gradient(#a45bc2, #823a9f); }
+    .btn-sort { background: linear-gradient(#4aa3e0, #2b7fc0); }
+    .btn-sort.on { background: linear-gradient(#f0933f, #d9731a); }
+    .header-btns .btn-ch.reset { background: rgba(255, 255, 255, 0.18); color: #fff; border: 1px solid rgba(255, 255, 255, 0.28); box-shadow: none; }
+    .header-btns .btn-ch.reset:hover { background: rgba(224, 36, 36, 0.55); }
+
+    /* 巡迴模式開關（標題列中間） */
+    .cycle-switch { display: flex; align-items: center; gap: 0.5rem; margin: 0 0.75rem; flex: 1; justify-content: center; }
+    .cycle-switch .cycle-label { font-size: 0.75rem; color: #e8dcc4; white-space: nowrap; }
+    .cycle-switch .cycle-seg { display: inline-flex; border-radius: 0.4375rem; overflow: hidden; background: rgba(255, 255, 255, 0.16); }
+    .cycle-switch .cycle-seg button {
+      border: none; background: transparent; color: #f3e9d6; font-size: 0.8125rem; padding: 0.4375rem 0.9375rem; cursor: pointer;
+    }
+    .cycle-switch .cycle-seg button + button { border-left: 1px solid rgba(255, 255, 255, 0.22); }
+    .cycle-switch .cycle-seg button:hover:not(:disabled):not(.active) { background: rgba(255, 255, 255, 0.2); }
+    .cycle-switch .cycle-seg button.active { background: var(--gold); color: #4a3519; font-weight: bold; }
+    .cycle-switch .cycle-seg button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* 60 頻道網格容器 */
+    .grid-wrapper { flex: 1; position: relative; width: 100%; height: 100%; overflow: hidden; }
+    #channel-grid { display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(6, 1fr); gap: 0.4375rem; height: 100%; }
+
+    /* 頻道卡片內部排版 */
+    .channel-card {
+      background: linear-gradient(#ffffff, #fbf8f1);
+      border: 2px solid #d9d2c1;
+      border-radius: 0.625rem;
+      padding: 0.3125rem 0.25rem;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: var(--shadow-s);
+      transition: transform 0.12s, box-shadow 0.12s, background 0.2s, border-color 0.2s;
+      position: relative;
+    }
+    .channel-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-m); }
+    /* 邊框顏色與左側 Boss 列表圓圈一致：綠 = 計時中、紅 = 剩 2 分鐘內（含已重生）、灰 = 尚未計時 */
+    .channel-card.has-timer { border: 2px solid var(--green) !important; box-shadow: 0 1px 0.25rem rgba(22, 163, 74, 0.22); }
+    .channel-card.has-timer.soon { border: 2px solid var(--red) !important; box-shadow: 0 0 0 0.1875rem rgba(224, 36, 36, 0.12), 0 1px 0.25rem rgba(224, 36, 36, 0.25); }
+    .channel-card.counting { background: linear-gradient(#f4f8ff, #e5eefc); }
+    .channel-card.has-timer.soon.counting { background: linear-gradient(#fff7f5, #ffe7e2); }
+    .channel-card.player-cd { background: linear-gradient(#f1fbf8, #dff5ef); border-color: var(--teal) !important; }
+    .channel-card.maybe { background: linear-gradient(#fffbe8, #fff1bd); }
+    .channel-card.ready { background: #ffe3e3; }
+
+    .ch-title { font-weight: bold; color: var(--brown-1); font-size: 0.8125rem; text-align: left; padding-left: 0.25rem; }
+    .ch-status { font-size: 0.875rem; color: #2b2418; font-weight: 800; margin: 1px 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .channel-card.has-timer.soon .ch-status { color: #c0392b; }
+    .ch-estimated-time { font-size: 0.625rem; color: #8a7d66; margin-bottom: 0.1875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+
+    .btn-group { display: flex; gap: 0.25rem; justify-content: center; }
+    .btn-ch {
+      background: linear-gradient(#58b85c, #3f9d44); color: white; border: none; padding: 0.3125rem 0.375rem; border-radius: 0.375rem;
+      cursor: pointer; font-size: 0.75rem; font-weight: bold; flex: 1; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+    .btn-ch:hover { filter: brightness(1.08); }
+    .btn-ch.reset { background: #ece6d6; color: #6b5f4c; box-shadow: none; border: 1px solid #ddd2b8; }
+    .btn-ch.reset:hover { background: #ddd3bb; filter: none; }
+
+    /* 「獨 / 搶」備註按鈕樣式 */
+    .note-badges-container { position: absolute; top: 0.1875rem; right: 0.1875rem; display: flex; flex-direction: row; gap: 0.125rem; z-index: 5; }
+    .note-badge {
+      width: 1.125rem; height: 1.125rem; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.6875rem; font-weight: bold; cursor: pointer; user-select: none;
+      transition: all 0.2s ease;
+      border: 1px solid #d0d0d0; color: #b0b0b0; background-color: rgba(255, 255, 255, 0.7); opacity: 0.45;
+    }
+    .note-badge:hover { opacity: 0.85; transform: scale(1.1); }
+    .note-badge.badge-solo.active { border: 1.5px solid #e74c3c; color: #e74c3c; background-color: #fff; font-weight: 900; opacity: 1; box-shadow: 0 0 0.3125rem rgba(231, 76, 60, 0.45); }
+    .note-badge.badge-unsure.active { border: 1.5px solid #8e44ad; color: #8e44ad; background-color: #fff; font-weight: 900; opacity: 1; box-shadow: 0 0 5px rgba(142, 68, 173, 0.45); }
+    .note-badge.badge-steal.active { border: 1.5px solid #2980b9; color: #2980b9; background-color: #fff; font-weight: 900; opacity: 1; box-shadow: 0 0 0.3125rem rgba(41, 128, 185, 0.45); }
+
+    /* 個別頻道巡迴模式：自 = 自動、手 = 手動（卡片左側） */
+    .cycle-badge {
+      position: absolute; left: 0.25rem; top: 1.5rem;
+      width: 1.0625rem; height: 1.0625rem; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.625rem; font-weight: bold; color: #fff;
+      cursor: pointer; user-select: none; z-index: 5;
+      border: 1px solid rgba(255, 255, 255, 0.85); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      transition: transform 0.12s, filter 0.15s;
+    }
+    .cycle-badge.auto { background: #4a6278; }
+    .cycle-badge.manual { background: #e67e22; }
+    .cycle-badge.locked { cursor: not-allowed; opacity: 0.6; }
+    .cycle-badge:not(.locked):hover { filter: brightness(1.15); transform: scale(1.15); }
+
+    /* 迷霧遮罩 */
+    .fog-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(244, 238, 224, 0.72);
+      backdrop-filter: blur(0.75rem); -webkit-backdrop-filter: blur(0.75rem);
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      z-index: 100; border-radius: 0.75rem; border: 2px dashed #b8986c;
+    }
+    .fog-box { background: #fff; padding: 1.625rem 1.625rem 1.5rem; border-radius: 0.875rem; border-top: 0.3125rem solid var(--brown-2); box-shadow: 0 0.75rem 2rem rgba(60, 40, 10, 0.25); text-align: center; max-width: 21.25rem; width: 90%; }
+    .fog-box h3 { margin-bottom: 0.5rem; color: var(--brown-1); font-size: 1.125rem; }
+    .fog-box p { font-size: 0.8125rem; color: #7a6d57; margin-bottom: 1rem; }
+    .fog-box input { width: 100%; padding: 0.6875rem; border: 1px solid #cdbf9f; border-radius: 0.5rem; font-size: 1rem; text-align: center; margin-bottom: 0.75rem; letter-spacing: 2px; outline: none; }
+    .fog-box input:focus { border-color: #b8986c; box-shadow: 0 0 0 0.1875rem rgba(184, 152, 108, 0.28); }
+    .fog-box button { width: 100%; padding: 0.6875rem; background: linear-gradient(#e8802c, #cc5f12); color: white; border: none; border-radius: 0.5rem; font-weight: bold; font-size: 0.9375rem; cursor: pointer; box-shadow: 0 2px 0.25rem rgba(0, 0, 0, 0.25); }
+    .fog-box button:hover { filter: brightness(1.08); }
+
+    /* 版本鎖定全螢幕遮罩 */
+    #version-lock-overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(0.5rem);
+      display: none; flex-direction: column; justify-content: center; align-items: center;
+      z-index: 9999; color: #fff; text-align: center;
+    }
+    #version-lock-overlay .lock-box { background: #2c3e50; padding: 1.875rem; border-radius: 0.75rem; border: 2px solid #e74c3c; max-width: 25rem; width: 90%; }
+    #version-lock-overlay h2 { color: #e74c3c; margin-bottom: 0.75rem; font-size: 1.375rem; }
+    #version-lock-overlay p { color: #ecf0f1; font-size: 0.875rem; line-height: 1.6; margin-bottom: 0.5rem; }
+
+    /* Modal 彈窗樣式 */
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes popIn { from { opacity: 0; transform: translateY(0.5rem) scale(0.97); } to { opacity: 1; transform: none; } }
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(40, 28, 10, 0.5); backdrop-filter: blur(0.1875rem); justify-content: center; align-items: center; z-index: 1000; animation: fadeIn 0.15s ease-out; }
+    .modal-content { background: var(--cream); padding: 1.375rem 1.5rem; border-radius: 0.875rem; width: 25rem; max-width: 94vw; box-shadow: 0 0.875rem 2.25rem rgba(40, 28, 10, 0.4); border: 1px solid var(--line); border-top: 0.3125rem solid var(--brown-2); animation: popIn 0.18s ease-out; }
+    .modal-content h3 { margin-bottom: 0.875rem; padding-bottom: 0.625rem; border-bottom: 2px solid var(--line); color: var(--brown-1); font-size: 1.125rem; }
+    .form-group { margin-bottom: 0.75rem; font-size: 0.875rem; }
+    .form-group label { display: block; margin-bottom: 0.25rem; font-weight: bold; color: #5a4a33; }
+    .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group input[type="time"], .form-group select {
+      width: 100%; padding: 0.5rem 0.625rem; border: 1px solid #cdbf9f; border-radius: 0.5rem; font-size: 0.875rem; background: #fff; outline: none;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: #b8986c; box-shadow: 0 0 0 0.1875rem rgba(184, 152, 108, 0.28); }
+    .checkbox-group { display: flex; align-items: center; gap: 0.375rem; margin-bottom: 0.625rem; font-size: 0.875rem; }
+    .modal-btns { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1.125rem; }
+    .btn-save { background: linear-gradient(#e8802c, #cc5f12); color: white; border: none; padding: 0.625rem; border-radius: 0.5rem; cursor: pointer; font-weight: bold; font-size: 0.875rem; box-shadow: 0 2px 0.25rem rgba(0, 0, 0, 0.22); }
+    .btn-save:hover { filter: brightness(1.08); }
+    .btn-clear { background: linear-gradient(#d9594a, #b8372a); color: white; border: none; padding: 0.625rem; border-radius: 0.5rem; cursor: pointer; font-size: 0.875rem; box-shadow: 0 2px 0.25rem rgba(0, 0, 0, 0.22); }
+    .btn-clear:hover { filter: brightness(1.08); }
+    .btn-close { background: #fff; border: 1px solid #cdbf9f; color: #5a4a33; padding: 0.625rem; border-radius: 0.5rem; cursor: pointer; font-size: 0.875rem; }
+    .btn-close:hover { background: #f3ead6; }
+
+    /* 線上人員 */
+    .btn-online { background: linear-gradient(#3dc176, #22a05a); }
+    .btn-online::before { content: ""; display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #c8f7da; margin-right: 0.4rem; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35); vertical-align: middle; }
+    .online-list { max-height: 16rem; overflow-y: auto; margin-bottom: 0.75rem; border: 1px solid var(--line); border-radius: 0.5rem; background: #fff; }
+    .online-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4375rem 0.625rem; border-bottom: 1px solid #f0e9d8; font-size: 0.875rem; }
+    .online-row:last-child { border-bottom: 0; }
+    .online-row .dot { flex: 0 0 0.5625rem; height: 0.5625rem; border-radius: 50%; background: #22a05a; box-shadow: 0 0 0 2px rgba(34, 160, 90, 0.2); }
+    .online-row .nm { flex: 1; min-width: 0; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .online-row .meta { font-size: 0.75rem; color: #8a7d66; white-space: nowrap; }
+    .online-row.me { background: #fff8e1; }
+    .online-empty { padding: 1rem; text-align: center; color: #8a7d66; font-size: 0.875rem; }
+    /* 聯盟共享 */
+    .btn-share { background: linear-gradient(#e0a526, #bf8610); }
+    .share-tag { font-style: normal; font-size: 0.625rem; font-weight: bold; color: #fff; background: #e0a526; border-radius: 0.5rem; padding: 0 0.3rem; margin-left: 0.25rem; vertical-align: middle; }
+    .boss-item.active .share-tag { background: var(--gold); color: #4a3519; }
+    .share-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.75rem; max-height: 14rem; overflow-y: auto; padding: 0.5rem 0.625rem; background: #fff; border: 1px solid var(--line); border-radius: 0.5rem; }
+    .share-row { display: flex; align-items: center; gap: 0.375rem; font-size: 0.875rem; cursor: pointer; margin: 0; font-weight: normal !important; }
+    .share-hint { margin-top: 0.3125rem; font-size: 0.75rem; color: #8a7d66; line-height: 1.5; }
+    /* 盟友版：隱藏所有管理功能 */
+    .ally-mode .btn-cd, .ally-mode .btn-admin, .ally-mode .btn-share, .ally-mode .btn-discord-set,
+    .ally-mode #discord-toggle-btn, .ally-mode #online-btn, .ally-mode #cycle-switch,
+    .ally-mode .header-btns .btn-ch.reset { display: none !important; }
+    .range-row { display: flex; align-items: center; gap: 0.5rem; }
+    .range-row input { flex: 1; min-width: 0; }
+    .range-hint { margin-top: 0.3125rem; font-size: 0.75rem; color: #8a7d66; line-height: 1.5; }
+    .nick-hint { display: none; font-size: 0.8125rem; color: #c0392b; margin-bottom: 0.5rem; }
+  
+  </style>
+</head>
+<body>
+
+  <!-- 版本過期 / 不吻合鎖定遮罩 -->
+  <div id="version-lock-overlay">
+    <div class="lock-box">
+      <h2>⚠️ 版本過期無法使用</h2>
+      <p id="version-lock-msg">您當前的網頁版本過舊或不符，系統已停用功能。</p>
+      <p style="color: #f39c12; font-weight: bold; margin-top: 0.625rem;">請取得最新版本的 HTML 程式碼！</p>
+    </div>
+  </div>
+
+  <!-- 左側選單 -->
+  <div id="sidebar">
+    <h2>Boss 列表</h2>
+    
+    <!-- Boss 列表區 -->
+    <div class="boss-list-container" id="boss-list"></div>
+    
+    <!-- 固定在左下角的工具區 -->
+    <div class="tools-area">
+      <button type="button" class="btn-tool btn-fix" onclick="openFixTimeModal()">⏱️ 修正時間</button>
+      <button type="button" class="btn-tool btn-cd" onclick="openBossCdModal()">⚙️ 冷卻設定</button>
+      <button type="button" class="btn-tool btn-discord-set" onclick="openDiscordModal()">Discord 設定</button>
+      <button type="button" id="discord-toggle-btn" class="btn-tool" onclick="toggleDiscordEnabled()">🔔 通知：開</button>
+      <button type="button" class="btn-tool btn-share" onclick="openShareModal()">🤝 聯盟共享</button>
+      <button type="button" class="btn-tool btn-admin" onclick="openPasswordModal()">變更密碼</button>
+      <button type="button" class="btn-tool btn-logout" style="grid-column: span 2;" onclick="logout()">🔒 鎖定</button>
+    </div>
+  </div>
+
+  <!-- 主畫面 -->
+  <div id="main">
+    <div class="header">
+      <div>
+        <h1 id="current-boss-name">
+          請選擇 Boss 
+          <span id="room-display" class="room-badge">小隊: 啾察隊</span>
+          <span id="version-display" class="version-badge">ver.08</span>
+        </h1>
+        <p id="current-boss-info">重生時間：-- 分鐘</p>
+      </div>
+      <div id="cycle-switch" class="cycle-switch">
+        <span class="cycle-label">全體切換</span>
+        <div class="cycle-seg">
+          <button type="button" id="cycle-auto-btn" onclick="setBossCycleMode('auto')" title="將此王所有頻道切換為自動巡迴">全體自動</button>
+          <button type="button" id="cycle-manual-btn" onclick="setBossCycleMode('manual')" title="將此王所有頻道切換為手動巡迴">全體手動</button>
+        </div>
+      </div>
+      <div class="header-btns">
+        <button id="online-btn" class="btn-tool btn-online" onclick="openOnlineModal()" title="查看線上人員">線上 0 人</button>
+        <button id="copy-btn" class="btn-tool btn-copy" onclick="copyBossRecords()" title="複製這隻王所有有記錄的頻道與重生時間（純文字）">複製記錄</button>
+        <button id="popout-btn" class="btn-tool btn-popout" onclick="openPopout()" title="開啟置頂小視窗（Chrome / Edge 可永遠置頂），方便直接按擊殺">彈出小視窗</button>
+        <button id="sort-toggle-btn" class="btn-tool btn-sort" onclick="toggleSortMode()">排序：頻道1~60</button>
+        <button class="btn-ch reset" onclick="clearCurrentBossData()">重置全頻道</button>
+      </div>
+    </div>
+
+    <!-- 計時卡片區域與迷霧 -->
+    <div class="grid-wrapper">
+      <div id="fog-overlay" class="fog-overlay">
+        <div class="fog-box">
+          <h3>🌫️ 計時區域已被迷霧覆蓋</h3>
+          <p>請輸入暱稱 / ID 與指定密碼解鎖內容</p>
+          <input type="text" id="input-nick" maxlength="12" placeholder="暱稱 / ID（必填，最多 12 字）" autocomplete="off" onkeydown="if(event.key==='Enter') document.getElementById('input-view-pass').focus()">
+          <input type="password" id="input-view-pass" placeholder="請輸入密碼" onkeydown="if(event.key==='Enter') unlockFog()">
+          <button type="button" onclick="unlockFog()">解鎖查看</button>
+        </div>
+      </div>
+      <div id="channel-grid"></div>
+    </div>
+  </div>
+
+  <!-- 聯盟共享設定彈窗（權限限 Admin） -->
+  <div id="shareModal" class="modal">
+    <div class="modal-content">
+      <h3>🤝 聯盟共享設定</h3>
+      <div class="form-group">
+        <label>最大權限者金鑰 (Admin Key)</label>
+        <input type="password" id="shareAdminKey" placeholder="請輸入金鑰">
+      </div>
+      <div class="form-group">
+        <label>分享給聯盟的野王（勾選 = 盟友可查看與操作）</label>
+        <div id="shareBossList" class="share-list"></div>
+        <div class="share-hint">盟友只能看到並操作被勾選的野王，其他野王的資料、密碼、Webhook 都看不到。取消勾選後立即生效。</div>
+      </div>
+      <div class="form-group">
+        <label>聯盟密碼（留空 = 不變更；至少 8 個字元）</label>
+        <input type="password" id="shareAllyPass" placeholder="給盟友使用的密碼，請與公會密碼不同">
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-save" onclick="saveShareSettings()">儲存聯盟共享設定</button>
+        <button type="button" class="btn-close" onclick="closeShareModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 線上人員彈窗 -->
+  <div id="onlineModal" class="modal">
+    <div class="modal-content">
+      <h3>線上人員 <span id="onlineCount">0</span> 人</h3>
+      <div id="nickHint" class="nick-hint">請先設定你的暱稱 / ID，隊友才認得出你。</div>
+      <div id="onlineList" class="online-list"></div>
+      <div class="form-group">
+        <label>我的暱稱 / ID</label>
+        <input type="text" id="nickEditInput" maxlength="12" placeholder="最多 12 字" autocomplete="off" onkeydown="if(event.key==='Enter') saveMyNickname()">
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-save" onclick="saveMyNickname()">儲存暱稱</button>
+        <button type="button" class="btn-close" onclick="closeOnlineModal()">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修改各 Boss 玩家設定冷卻時間彈窗 (權限限 Admin) -->
+  <div id="bossCdModal" class="modal">
+    <div class="modal-content">
+      <h3>⚙️ 設定 Boss 冷卻與重生時間</h3>
+      <div class="form-group">
+        <label>最大權限者金鑰 (Admin Key)</label>
+        <input type="password" id="cdAdminKeyInput" placeholder="請輸入管理員金鑰">
+      </div>
+      <div class="form-group">
+        <label>選擇 Boss</label>
+        <select id="cdBossSelect"></select>
+      </div>
+      <div class="form-group">
+        <label>冷卻時間 (秒)</label>
+        <input type="number" id="cdSecInput" min="0" placeholder="請輸入秒數，例如: 5">
+      </div>
+      <div class="form-group">
+        <label>重生時間範圍 (分鐘)</label>
+        <div class="range-row">
+          <input type="number" id="rangeMinInput" min="1" max="1440" placeholder="最短">
+          <span>~</span>
+          <input type="number" id="rangeMaxInput" min="1" max="1440" placeholder="最長">
+        </div>
+        <div class="range-hint">最短 = 最長 代表固定時間（可使用自動巡迴）；兩者不同則為區間王，只能手動巡迴。預設：<b id="rangeDefaultText">--</b></div>
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-save" onclick="saveBossCdSetting()">儲存設定</button>
+        <button type="button" class="btn-clear" onclick="resetBossRange()">還原此王預設重生時間</button>
+        <button type="button" class="btn-close" onclick="closeBossCdModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修正/補填時間彈窗 -->
+  <div id="fixTimeModal" class="modal">
+    <div class="modal-content">
+      <h3>⏱ 修正 / 手動補填時間</h3>
+      <div class="form-group">
+        <label>選擇 Boss</label>
+        <select id="fixBossSelect" onchange="updateFixHint()"></select>
+      </div>
+      <div class="form-group">
+        <label>輸入類型</label>
+        <select id="fixTypeSelect" onchange="onFixTypeChange()">
+          <option value="kill">擊殺時間（修正誤按 / 補填）</option>
+          <option value="respawn">預計重生時間（程式自動換算擊殺時間）</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>頻道 (1 ~ 60)</label>
+        <input type="number" id="fixChannelInput" min="1" max="60" placeholder="請輸入頻道號碼，如: 23">
+      </div>
+      <div class="form-group">
+        <label id="fixTimeLabel">擊殺 / 重置時間 (今天)</label>
+        <input type="time" id="fixTimeInput" step="1" oninput="updateFixHint()" onchange="updateFixHint()">
+        <div id="fixTimeHint" style="font-size:0.75rem;color:#8a7d66;margin-top:0.3125rem;min-height:1rem;"></div>
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-save" onclick="saveFixTime()">確認更新時間</button>
+        <button type="button" class="btn-close" onclick="closeFixTimeModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Discord 設定彈窗 -->
+  <div id="discordModal" class="modal">
+    <div class="modal-content">
+      <h3>Discord 通知設定</h3>
+      <div class="checkbox-group">
+        <input type="checkbox" id="notifyEnabled" checked>
+        <label for="notifyEnabled"><b>啟用 Discord 通知（總開關）</b></label>
+      </div>
+      <div class="checkbox-group">
+        <input type="checkbox" id="notifyBefore" checked>
+        <label for="notifyBefore">Boss 重生前 2 分鐘通知</label>
+      </div>
+      <div class="checkbox-group">
+        <input type="checkbox" id="notifyRespawn" checked>
+        <label for="notifyRespawn">Boss 可能/必定重生通知</label>
+      </div>
+      <div class="checkbox-group">
+        <input type="checkbox" id="notifyKill" checked>
+        <label for="notifyKill">擊殺 / 重新計時</label>
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-save" onclick="saveDiscordConfig()">儲存設定</button>
+        <button type="button" class="btn-clear" onclick="removeDiscordConfig()">還原通知選項預設值</button>
+        <button type="button" class="btn-close" onclick="closeDiscordModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修改密碼彈窗 -->
+  <div id="passwordModal" class="modal">
+    <div class="modal-content">
+      <h3>變更小隊查看密碼</h3>
+      <div class="form-group">
+        <label>最大權限者金鑰 (Admin Key)</label>
+        <input type="password" id="adminKeyInput" placeholder="請輸入管理員金鑰">
+      </div>
+      <div class="form-group">
+        <label>設定新查看密碼</label>
+        <input type="password" id="newViewPassInput" placeholder="請輸入新查看密碼">
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-save" onclick="changeTeamPassword()">驗證權限並變更</button>
+        <button type="button" class="btn-close" onclick="closePasswordModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // 當前程式版本號
+    // ==========================================
+    const APP_VERSION = "ver.20261024.01";
+
+    // 聯盟版旗標：index.html（公會版）為 false；ally.html（盟友版）由同一份程式產生，此值為 true。
+    // 盟友版只能看到「已分享」的野王，且拿不到 Webhook、不能改任何管理設定。
+    const ALLY_MODE = true;
+
+    // 【必填】apiKey 請到 Firebase Console → 專案設定（齒輪）→ 一般 → 您的應用程式 → 網頁應用程式 → SDK 設定與配置，
+    // 複製 apiKey 貼到下方引號內（沒有網頁應用程式的話，先按「新增應用程式」建立一個）。
+    const firebaseConfig = {
+      apiKey: "AIzaSyA49WUfO1_PFTLdwnb39jmEfxzmLI2uizQ",
+      authDomain: "mscbosstimer-325e0.firebaseapp.com",
+      projectId: "mscbosstimer-325e0",
+      databaseURL: "https://mscbosstimer-325e0-default-rtdb.firebaseio.com/"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // 匿名登入：每個瀏覽器取得一個 uid，資料庫安全規則靠它判斷「是否已通過密碼驗證」
+    // 即使登入失敗也不會中斷整個網頁（Boss 列表等畫面仍會正常載入），並直接告知原因。
+    let auth = null;
+    let authReady;
+    try {
+      if (location.protocol === 'file:') {
+        throw { code: 'config/file-protocol' };
+      }
+      if (!firebaseConfig.apiKey || firebaseConfig.apiKey.indexOf('在此貼上') === 0) {
+        throw { code: 'config/missing-api-key' };
+      }
+      auth = firebase.auth();
+      authReady = auth.signInAnonymously().then(cred => cred.user);
+    } catch (e) {
+      authReady = Promise.reject(e);
+    }
+    authReady.catch(err => {
+      const hints = {
+        'config/file-protocol': '請不要直接雙擊 .html（file://）開啟。請把網頁放到網站（如 Firebase Hosting、GitHub Pages、Netlify），或在資料夾執行 python -m http.server 後用 http://localhost:8000 開啟。',
+        'config/missing-api-key': '請編輯 HTML，把 firebaseConfig 裡的 apiKey 換成 Firebase Console 的 Web API Key。',
+        'auth/invalid-api-key': 'apiKey 不正確，請重新從 Firebase Console → 專案設定 → 您的應用程式 複製。',
+        'auth/operation-not-allowed': '尚未在 Firebase Console → Authentication → 登入方式 啟用「匿名」。',
+        'auth/operation-not-supported-in-this-environment': '請用 http(s) 網址開啟網頁，不要用 file://。',
+        'auth/network-request-failed': '網路連線失敗，請檢查網路後重新整理。',
+        'auth/unauthorized-domain': '此網址未加入 Firebase Console → Authentication → 設定 → 已授權網域。'
+      };
+      alert('登入初始化失敗（' + (err.code || err.message) + '）\n' + (hints[err.code] || '請把這段錯誤代碼回報給管理員。'));
+    });
+
+    const roomId = "啾察隊";
+    const UNLOCK_KEY = ALLY_MODE ? `unlocked_ally_${roomId}` : `unlocked_${roomId}`; // 盟友版與公會版的解鎖狀態分開記錄
+    // Webhook 不再寫在程式碼裡：通過密碼驗證後，才從資料庫 rooms/<小隊>/discordWebhook 讀取
+    let DEFAULT_WEBHOOK_URL = "";
+
+    /* ==========================================
+       Boss 清單
+    ========================================== */
+    const bosses = [
+      { id: 'ruby', name: '紅寶王', minMin: 45, maxMin: 45, playerCdSec: 0 },
+      { id: 'stump', name: '樹妖王', minMin: 45, maxMin: 45, playerCdSec: 0 },
+      { id: 'monkey', name: '殭屍猴王', minMin: 45, maxMin: 45, playerCdSec: 0 },
+      { id: 'clam', name: '巨居蟹', minMin: 45, maxMin: 45, playerCdSec: 0 },
+      { id: 'swamp-croc', name: '沼澤巨鱷', minMin: 45, maxMin: 45, playerCdSec: 0 },
+      { id: 'shade', name: '冥界幽靈', minMin: 60, maxMin: 60, playerCdSec: 0 },
+      { id: 'mushroom', name: '蘑菇王', minMin: 40, maxMin: 60, playerCdSec: 0 },
+      { id: 'z_mushroom', name: '殭屍蘑菇王', minMin: 40, maxMin: 60, playerCdSec: 0 },
+      { id: 'balrog', name: '巴洛古', minMin: 240, maxMin: 360, playerCdSec: 0 },
+      { id: 'snow_witch', name: '雪山魔女', minMin: 158, maxMin: 180, playerCdSec: 0 },
+      { id: 'yeti_boss', name: '雪毛怪人', minMin: 58, maxMin: 90, playerCdSec: 0 },
+      { id: 'jr_balrog', name: '厄運死神', minMin: 45, maxMin: 105, playerCdSec: 0 },
+      { id: 'eliza', name: '艾利傑', minMin: 45, maxMin: 45, playerCdSec: 0 }
+    ];
+
+    let currentBoss = bosses[0];
+    let timerCache = {}; 
+    let bossCdCache = {};
+    let bossCycleCache = {};
+    let bossRangeCache = {}; // 管理員自訂的重生時間範圍：{ <bossId>: { min, max } } // 各王的巡迴模式：'auto' | 'manual'（存在 Firebase，全隊共用）
+    let sortByTime = false;
+    let isVersionValid = true;
+    
+    let discordConfig = JSON.parse(localStorage.getItem('discord_config')) || { 
+      enabled: true,
+      respawn: true, 
+      before: true, 
+      kill: true 
+    };
+    // 相容舊版已儲存的設定（沒有 enabled 欄位時視為開啟）
+    if (discordConfig.enabled === undefined) discordConfig.enabled = true;
+    // Webhook 網址不再允許在網頁中設定：清除舊版曾存在這台瀏覽器的網址，統一使用資料庫共用設定
+    if (discordConfig.url !== undefined) {
+      delete discordConfig.url;
+      localStorage.setItem('discord_config', JSON.stringify(discordConfig));
+    }
+
+    let notifiedState = {};
+
+    /* ==========================================
+       Firebase 版本檢查與強制鎖定機制
+    ========================================== */
+    function initVersionCheck() {
+      const versionRef = db.ref(`rooms/${roomId}/currentVersion`);
+      
+      versionRef.on('value', (snapshot) => {
+        const remoteVersion = snapshot.val();
+
+        if (remoteVersion === null) {
+          versionRef.set(APP_VERSION).catch(() => {});
+          return;
+        }
+
+        if (remoteVersion !== APP_VERSION) {
+          isVersionValid = false;
+          showVersionLock(remoteVersion);
+        } else {
+          isVersionValid = true;
+          hideVersionLock();
+        }
+      }, (error) => {
+        isVersionValid = false;
+        showVersionLock("舊版已被伺服器封鎖");
+      });
+    }
+
+    function showVersionLock(remoteVer) {
+      const lockOverlay = document.getElementById('version-lock-overlay');
+      const lockMsg = document.getElementById('version-lock-msg');
+      lockMsg.innerHTML = `當前網頁版本：<b style="color:#e74c3c">${APP_VERSION}</b><br>伺服器要求版本：<b style="color:#2ecc71">${remoteVer}</b><br><br>版本不匹配或已過期，系統功能已全面封鎖！`;
+      lockOverlay.style.display = 'flex';
+    }
+
+    function hideVersionLock() {
+      document.getElementById('version-lock-overlay').style.display = 'none';
+    }
+
+    function checkFogAuth() {
+      const isUnlocked = sessionStorage.getItem(UNLOCK_KEY);
+      if (isUnlocked === 'true') {
+        document.getElementById('fog-overlay').style.display = 'none';
+      } else {
+        document.getElementById('fog-overlay').style.display = 'flex';
+        document.getElementById('input-view-pass').value = '';
+        document.getElementById('input-nick').value = myNick; // 記住這台瀏覽器（同一組匿名登入）上次輸入的暱稱
+      }
+    }
+
+    function unlockFog() {
+      if (!isVersionValid) {
+        alert("版本不吻合，無法使用該功能！");
+        return;
+      }
+
+      const nick = sanitizeNick(document.getElementById('input-nick').value);
+      if (!nick) {
+        alert("請輸入暱稱或 ID！");
+        document.getElementById('input-nick').focus();
+        return;
+      }
+      const pwd = document.getElementById('input-view-pass').value.trim();
+      if (!pwd) {
+        alert("請輸入密碼！");
+        return;
+      }
+
+      // 密碼不再下載到瀏覽器比對：把輸入的密碼寫入 members/<小隊>/<uid>，
+      // 由資料庫安全規則在伺服器端判斷是否與 secrets 內的密碼相同。
+      authReady.then(user => db.ref(`${ALLY_MODE ? 'allies' : 'members'}/${roomId}/${user.uid}`).set(pwd)).then(() => {
+        myNick = nick;
+        try { localStorage.setItem('boss_nickname', nick); } catch (e) {}
+        sessionStorage.setItem(UNLOCK_KEY, 'true');
+        checkFogAuth();
+        listenToFirebase();
+        updatePresenceName(); // 若本次是改用新暱稱重新登入，同步更新線上名單
+      }).catch(err => {
+        if (isPermissionDenied(err)) {
+          alert("密碼不正確，無法解鎖！");
+        } else {
+          alert("驗證失敗，請檢查網路連線或版本權限！");
+        }
+      });
+    }
+
+    function isPermissionDenied(err) {
+      return /PERMISSION_DENIED/i.test(String((err && (err.code || '')) ) + String((err && err.message) || ''));
+    }
+
+    // 以管理員金鑰執行動作：先把金鑰寫入 admins/<小隊>/<uid> 讓伺服器規則驗證，做完立刻刪除
+    function withAdmin(adminKey, action) {
+      return authReady.then(user => {
+        const ref = db.ref(`admins/${roomId}/${user.uid}`);
+        const cleanup = () => { ref.remove().catch(() => {}); };
+        return ref.set(adminKey).catch(e => { cleanup(); e.stage = 'key'; throw e; })
+          .then(() => action())
+          .then(r => { cleanup(); return r; }, e => { cleanup(); throw e; });
+      });
+    }
+
+    function logout() {
+      sessionStorage.removeItem(UNLOCK_KEY);
+      stopPresence();
+      db.ref(`rooms/${roomId}`).off();
+      authReady.then(user => db.ref(`${ALLY_MODE ? 'allies' : 'members'}/${roomId}/${user.uid}`).remove()).catch(() => {});
+      if (ALLY_MODE) stopAllyListeners();
+      checkFogAuth();
+    }
+
+    function changeTeamPassword() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      const adminKey = document.getElementById('adminKeyInput').value.trim();
+      const newPass = document.getElementById('newViewPassInput').value.trim();
+
+      if (!adminKey || !newPass) {
+        alert("請填寫管理員金鑰與新密碼！");
+        return;
+      }
+
+      if (newPass.length < 6) {
+        alert("新密碼至少需要 6 個字元！");
+        return;
+      }
+
+      withAdmin(adminKey, () => db.ref(`secrets/${roomId}/viewPassword`).set(newPass)).then(() => {
+        alert("小隊查看密碼已成功更新！所有人需重新輸入新密碼。");
+        closePasswordModal();
+        logout();
+      }).catch(err => {
+        if (err && err.stage === 'key') alert("【權限不足】管理者金鑰錯誤！");
+        else alert("變更失敗，請檢查網路連線後重試！");
+      });
+    }
+
+    function openPasswordModal() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      document.getElementById('adminKeyInput').value = '';
+      document.getElementById('newViewPassInput').value = '';
+      document.getElementById('passwordModal').style.display = 'flex';
+    }
+
+    function closePasswordModal() {
+      document.getElementById('passwordModal').style.display = 'none';
+    }
+
+    /* ==========================================
+       Boss 冷卻時間設定彈窗與處理 logic
+    ========================================== */
+    function fillCdModalFields(bossId) {
+      const boss = bosses.find(b => b.id === bossId);
+      if (!boss) return;
+      document.getElementById('cdSecInput').value = getBossCdSec(bossId);
+      document.getElementById('rangeMinInput').value = boss.minMin;
+      document.getElementById('rangeMaxInput').value = boss.maxMin;
+      const dMin = boss.defMin !== undefined ? boss.defMin : boss.minMin;
+      const dMax = boss.defMax !== undefined ? boss.defMax : boss.maxMin;
+      document.getElementById('rangeDefaultText').textContent = dMin === dMax ? `${dMin} 分鐘` : `${dMin} ~ ${dMax} 分鐘`;
+    }
+
+    function openBossCdModal() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      document.getElementById('cdAdminKeyInput').value = '';
+      
+      const cdBossSelect = document.getElementById('cdBossSelect');
+      cdBossSelect.innerHTML = '';
+      bosses.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.innerText = b.name;
+        if (b.id === currentBoss.id) opt.selected = true;
+        cdBossSelect.appendChild(opt);
+      });
+
+      fillCdModalFields(currentBoss.id);
+      cdBossSelect.onchange = function() { fillCdModalFields(this.value); };
+
+      document.getElementById('bossCdModal').style.display = 'flex';
+    }
+
+    function closeBossCdModal() {
+      document.getElementById('bossCdModal').style.display = 'none';
+    }
+
+    function saveBossCdSetting() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      const adminKey = document.getElementById('cdAdminKeyInput').value.trim();
+      const bossId = document.getElementById('cdBossSelect').value;
+      const boss = bosses.find(b => b.id === bossId);
+      const cdSecRaw = document.getElementById('cdSecInput').value.trim();
+      const cdSec = parseInt(cdSecRaw, 10);
+      const minRaw = document.getElementById('rangeMinInput').value.trim();
+      const maxRaw = document.getElementById('rangeMaxInput').value.trim();
+      const rMin = parseInt(minRaw, 10);
+      const rMax = parseInt(maxRaw, 10);
+
+      if (!adminKey) {
+        alert("請輸入管理員金鑰！");
+        return;
+      }
+      if (cdSecRaw === '' || isNaN(cdSec) || cdSec < 0) {
+        alert("請輸入有效的冷卻秒數（正整數或0）！");
+        return;
+      }
+      if (minRaw === '' || maxRaw === '' || isNaN(rMin) || isNaN(rMax) || rMin < 1 || rMax < rMin || rMax > 1440) {
+        alert("重生時間範圍不正確：請輸入 1 ~ 1440 的整數分鐘，且「最長」不可小於「最短」！");
+        return;
+      }
+
+      // 與程式內建預設相同就不存，保持資料庫乾淨
+      const isDefault = boss.defMin !== undefined && rMin === boss.defMin && rMax === boss.defMax;
+      withAdmin(adminKey, () => Promise.all([
+        db.ref(`rooms/${roomId}/bossCdSettings/${bossId}`).set(cdSec),
+        isDefault
+          ? db.ref(`rooms/${roomId}/bossRangeSettings/${bossId}`).remove()
+          : db.ref(`rooms/${roomId}/bossRangeSettings/${bossId}`).set({ min: rMin, max: rMax })
+      ])).then(() => {
+        const rangeText = rMin === rMax ? `${rMin} 分鐘` : `${rMin} ~ ${rMax} 分鐘`;
+        alert(`已成功更新【${boss.name}】：冷卻 +${cdSec} 秒、重生時間 ${rangeText}！`);
+        closeBossCdModal();
+      }).catch(err => {
+        if (err && err.stage === 'key') alert("【權限不足】管理者金鑰錯誤！");
+        else alert("寫入資料庫失敗，請重試！");
+      });
+    }
+
+    // 移除自訂重生時間，回到程式內建預設
+    function resetBossRange() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      const adminKey = document.getElementById('cdAdminKeyInput').value.trim();
+      const bossId = document.getElementById('cdBossSelect').value;
+      const boss = bosses.find(b => b.id === bossId);
+      if (!adminKey) { alert("請輸入管理員金鑰！"); return; }
+      withAdmin(adminKey, () => db.ref(`rooms/${roomId}/bossRangeSettings/${bossId}`).remove()).then(() => {
+        alert(`已將【${boss.name}】的重生時間還原為預設值！`);
+        closeBossCdModal();
+      }).catch(err => {
+        if (err && err.stage === 'key') alert("【權限不足】管理者金鑰錯誤！");
+        else alert("操作失敗，請重試！");
+      });
+    }
+
+    /* ==========================================
+       巡迴模式
+       auto   ：玩家冷卻結束後自動進入下一個循環（僅限重生時間最大 = 最小的王）
+       manual ：到達重生時間後停在「已重生」，必須按「擊殺」才進入下一個循環
+       最大 ≠ 最小的王一律為手動。尚未設定過的王預設為自動（沿用原行為）。
+    ========================================== */
+    // 資料庫 bossCycleSettings/<bossId> 的格式：
+    //   { mode, since }            → 該王「全體」預設
+    //   { ..., ch<N>: {mode,since} } → 個別頻道的設定（優先於全體預設）
+    //   或舊格式字串 'auto' | 'manual'
+    function getBossCycleEntry(boss, ch) {
+      const v = bossCycleCache ? bossCycleCache[boss.id] : null;
+      if (v && typeof v === 'object') {
+        const own = v['ch' + ch];
+        if (own && typeof own === 'object') return own;
+        return { mode: v.mode, since: v.since };
+      }
+      return { mode: v, since: null };
+    }
+
+    function getBossCycleMode(boss, ch) {
+      if (boss.minMin !== boss.maxMin) return 'manual';
+      return getBossCycleEntry(boss, ch).mode === 'manual' ? 'manual' : 'auto';
+    }
+
+    // 由自動切換為手動的時間點：該時間點「正在進行的那一輪」會照常倒數完畢
+    function getBossManualSince(boss, ch) {
+      if (boss.minMin !== boss.maxMin) return null;
+      const since = getBossCycleEntry(boss, ch).since;
+      return since ? parseInt(since) : null;
+    }
+
+    // 目前這隻王 60 個頻道是否全部同一模式：回傳 'auto' | 'manual' | 'mixed'
+    function getBossAllMode(boss) {
+      let auto = 0, manual = 0;
+      for (let ch = 1; ch <= 60; ch++) {
+        if (getBossCycleMode(boss, ch) === 'auto') auto++; else manual++;
+      }
+      return manual === 0 ? 'auto' : (auto === 0 ? 'manual' : 'mixed');
+    }
+
+    function updateCycleSwitch() {
+      const autoBtn = document.getElementById('cycle-auto-btn');
+      const manualBtn = document.getElementById('cycle-manual-btn');
+      if (!autoBtn || !manualBtn || !currentBoss) return;
+      const all = getBossAllMode(currentBoss);
+      const canAuto = currentBoss.minMin === currentBoss.maxMin;
+      autoBtn.classList.toggle('active', all === 'auto');
+      manualBtn.classList.toggle('active', all === 'manual');
+      autoBtn.disabled = !canAuto;
+      autoBtn.title = canAuto ? '將此王所有頻道切換為自動巡迴' : '重生時間為區間的王只能使用手動巡迴';
+      manualBtn.title = '將此王所有頻道切換為手動巡迴';
+    }
+
+    // 全體切換：一次設定這隻王所有頻道（同時清除個別頻道的設定）
+    function setBossCycleMode(mode, boss = currentBoss, skipConfirm = false) {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      if (mode === 'auto' && boss.minMin !== boss.maxMin) {
+        alert("重生時間最大與最小不同的王，只能使用手動巡迴！");
+        return;
+      }
+      if (getBossAllMode(boss) === mode) return; // 已全體為該模式，避免重設切換時間
+      const label = mode === 'auto' ? '全體自動巡迴' : '全體手動巡迴';
+      if (!skipConfirm && !confirm(`確定將【${boss.name}】的所有頻道切換為「${label}」嗎？`)) return;
+      const value = (mode === 'manual' && boss.minMin === boss.maxMin)
+        ? { mode: 'manual', since: Date.now() }
+        : { mode: mode };
+      db.ref(`rooms/${roomId}/bossCycleSettings/${boss.id}`).set(value).catch(() => {
+        alert("寫入資料庫失敗，請重試！");
+      });
+    }
+
+    // 單一頻道切換（點卡片左側的「自／手」圓圈）
+    function toggleChannelCycle(ch, boss = currentBoss) {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      if (boss.minMin !== boss.maxMin) {
+        alert("重生時間為區間的王，只能使用手動巡迴！");
+        return;
+      }
+      const next = getBossCycleMode(boss, ch) === 'auto' ? 'manual' : 'auto';
+      const value = next === 'manual' ? { mode: 'manual', since: Date.now() } : { mode: 'auto' };
+      db.ref(`rooms/${roomId}/bossCycleSettings/${boss.id}/ch${ch}`).set(value).catch(() => {
+        alert("寫入資料庫失敗，請重試！");
+      });
+    }
+
+    function getBossCdSec(bossId) {
+      if (bossCdCache && bossCdCache[bossId] !== undefined) {
+        return parseInt(bossCdCache[bossId], 10);
+      }
+      const b = bosses.find(item => item.id === bossId);
+      return b ? b.playerCdSec : 0;
+    }
+
+    function openFixTimeModal() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      const bossSelect = document.getElementById('fixBossSelect');
+      bossSelect.innerHTML = '';
+      visibleBosses().forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.innerText = b.name;
+        if (b.id === currentBoss.id) opt.selected = true;
+        bossSelect.appendChild(opt);
+      });
+
+      document.getElementById('fixChannelInput').value = '';
+      
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      document.getElementById('fixTimeInput').value = `${hh}:${mm}:${ss}`;
+
+      document.getElementById('fixTypeSelect').value = 'kill';
+      onFixTypeChange();
+
+      document.getElementById('fixTimeModal').style.display = 'flex';
+    }
+
+    // 切換輸入類型：更新欄位名稱與換算提示
+    function onFixTypeChange() {
+      const type = document.getElementById('fixTypeSelect').value;
+      document.getElementById('fixTimeLabel').innerText =
+        type === 'respawn' ? '預計重生時間' : '擊殺 / 重置時間 (今天)';
+      updateFixHint();
+    }
+
+    // 依輸入類型換算出「擊殺時間」(毫秒)。
+    // - 擊殺時間：沿用原本規則，以今天的時分秒為準。
+    // - 預計重生時間：擊殺時間 = 重生時間 − 最早重生分鐘數。
+    //   重生時間可能落在今天、昨天或明天，這裡挑「不晚於現在」且最接近現在的那一個。
+    function computeFixKillTime(bossId, type, timeVal) {
+      const parts = timeVal.split(':');
+      const base = new Date();
+      base.setHours(parseInt(parts[0]), parseInt(parts[1]), parts[2] ? parseInt(parts[2]) : 0, 0);
+      const t = base.getTime();
+      if (type !== 'respawn') return t;
+
+      const boss = bosses.find(b => b.id === bossId);
+      const minMs = boss.minMin * 60 * 1000;
+      const DAY = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      let best = null;
+      [-DAY, 0, DAY].forEach(off => {
+        const kill = t + off - minMs;
+        if (kill <= now + 60 * 1000 && (best === null || kill > best)) best = kill;
+      });
+      return best !== null ? best : t - minMs;
+    }
+
+    function formatFixDateTime(ts) {
+      const d = new Date(ts);
+      const hms = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+      const today = new Date();
+      if (d.toDateString() === today.toDateString()) return hms;
+      return `${d.getMonth() + 1}/${d.getDate()} ${hms}`;
+    }
+
+    function updateFixHint() {
+      const hint = document.getElementById('fixTimeHint');
+      if (!hint) return;
+      const type = document.getElementById('fixTypeSelect').value;
+      const timeVal = document.getElementById('fixTimeInput').value;
+      const bossId = document.getElementById('fixBossSelect').value;
+      if (type !== 'respawn' || !timeVal || !bossId) { hint.innerText = ''; return; }
+      const boss = bosses.find(b => b.id === bossId);
+      const kill = computeFixKillTime(bossId, type, timeVal);
+      const extra = boss.minMin !== boss.maxMin ? '（區間王以最早重生時間換算）' : '';
+      hint.innerText = `將換算為擊殺時間 ${formatFixDateTime(kill)}（重生 ${boss.minMin} 分鐘）${extra}`;
+    }
+
+    function closeFixTimeModal() {
+      document.getElementById('fixTimeModal').style.display = 'none';
+    }
+
+    function saveFixTime() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      const bossId = document.getElementById('fixBossSelect').value;
+      const ch = parseInt(document.getElementById('fixChannelInput').value);
+      const timeVal = document.getElementById('fixTimeInput').value;
+
+      if (!ch || ch < 1 || ch > 60) {
+        alert("請輸入正確的頻道號碼 (1 ~ 60)！");
+        return;
+      }
+      if (!timeVal) {
+        alert("請選擇有效的時間！");
+        return;
+      }
+
+      const type = document.getElementById('fixTypeSelect').value;
+      const targetTimestamp = computeFixKillTime(bossId, type, timeVal);
+
+      delete notifiedState[`${bossId}_${ch}_before`];
+      delete notifiedState[`${bossId}_${ch}_min`];
+      delete notifiedState[`${bossId}_${ch}_max`];
+
+      const curData = getChannelData(bossId, ch);
+      updateChannelData(bossId, ch, {
+        killTime: targetTimestamp,
+        isSolo: curData.isSolo,
+        isSteal: curData.isSteal,
+        isUnsure: curData.isUnsure,
+        playerCdStartTime: null
+      });
+
+      const bossName = bosses.find(b => b.id === bossId).name;
+      if (type === 'respawn') {
+        alert(`已將【${bossName}】第 ${ch} 頻 的預計重生時間設定為 ${timeVal}（換算擊殺時間 ${formatFixDateTime(targetTimestamp)}）！`);
+      } else {
+        alert(`已將【${bossName}】第 ${ch} 頻 的時間成功修正為 ${timeVal}！`);
+      }
+      closeFixTimeModal();
+    }
+
+    function listenToFirebase() {
+      // 未通過密碼驗證前不連線讀取資料（資料庫規則也會擋）
+      if (sessionStorage.getItem(UNLOCK_KEY) !== 'true') return;
+      if (ALLY_MODE) { listenAlly(); return; }
+      startPresence();
+      authReady.then(() => {
+        db.ref(`rooms/${roomId}`).off();
+        db.ref(`rooms/${roomId}`).on('value', (snapshot) => {
+          const val = snapshot.val() || {};
+          timerCache = val;
+          bossCdCache = val.bossCdSettings || {};
+          bossCycleCache = val.bossCycleSettings || {};
+          bossRangeCache = val.bossRangeSettings || {};
+          applyBossOverrides();
+          refreshBossHeaderInfo();
+          if (val.discordWebhook) DEFAULT_WEBHOOK_URL = val.discordWebhook;
+          updateCycleSwitch();
+          scanAllBosses();
+          initSidebar();
+          renderChannels();
+          updatePopout();
+        }, () => {
+          // 讀取被拒絕（密碼已被變更或驗證失效）：回到鎖定畫面
+          logout();
+        });
+      }).catch(() => {});
+    }
+
+    function initSidebar() {
+      const listEl = document.getElementById('boss-list');
+      listEl.innerHTML = '';
+      visibleBosses().forEach(boss => {
+        const div = document.createElement('div');
+        div.className = `boss-item ${boss.id === currentBoss.id ? 'active' : ''}`;
+        const timeText = boss.minMin === boss.maxMin ? `${boss.minMin}分` : `${boss.minMin}~${boss.maxMin}分`;
+        const cdSec = getBossCdSec(boss.id);
+        
+        div.innerHTML = `
+          <span class="boss-name">${boss.name}${(!ALLY_MODE && timerCache.sharedBosses && timerCache.sharedBosses[boss.id]) ? '<i class="share-tag" title="已分享給聯盟">聯</i>' : ''}</span>
+          <div class="boss-info-group"><span class="boss-time-tag">${timeText}</span><span class="boss-cd-tag">+${cdSec}s</span></div>
+          <div class="boss-badges" data-boss-id="${boss.id}">
+            <i class="boss-badge red" title="即將重生"></i>
+            <i class="boss-badge green" title="計時中"></i>
+          </div>
+        `;
+        div.onclick = () => selectBoss(boss);
+        listEl.appendChild(div);
+      });
+      updateSidebarBadges();
+    }
+
+    // 「即將重生」的判斷：距離最早重生時間 2 分鐘內，或已進入可能重生區間
+    const SOON_SEC = 120;
+
+    // 各王的紅/綠圓圈小計（由 scanAllBosses 每秒更新）
+    let bossCounts = {};
+
+    // 左側列表的圓圈只改文字與顯示狀態，不重建列表
+    function updateSidebarBadges() {
+      bosses.forEach(boss => {
+        const box = document.querySelector(`.boss-badges[data-boss-id="${boss.id}"]`);
+        if (!box) return;
+        const c = bossCounts[boss.id] || { soon: 0, counting: 0 };
+        const red = box.querySelector('.red');
+        const green = box.querySelector('.green');
+        const rt = String(c.soon), gt = String(c.counting);
+        if (red.textContent !== rt) red.textContent = rt;
+        if (green.textContent !== gt) green.textContent = gt;
+        red.classList.toggle('show', c.soon > 0);
+        green.classList.toggle('show', c.counting > 0);
+      });
+    }
+
+    // 標題列的「重生時間／玩家冷卻」說明文字
+    function refreshBossHeaderInfo() {
+      const el = document.getElementById('current-boss-info');
+      if (!el || !currentBoss) return;
+      const boss = currentBoss;
+      const timeText = boss.minMin === boss.maxMin ? `${boss.minMin} 分鐘` : `${boss.minMin} ~ ${boss.maxMin} 分鐘`;
+      el.textContent = `重生時間：${timeText} (玩家冷卻：+${getBossCdSec(boss.id)}秒)`;
+    }
+
+    // 把資料庫裡的自訂重生時間範圍套用到 Boss 清單（沒有自訂就還原程式內建預設）。
+    // 之後所有畫面、通知、小視窗讀到的都是同一份數值。
+    function applyBossOverrides() {
+      bosses.forEach(boss => {
+        if (boss.defMin === undefined) { boss.defMin = boss.minMin; boss.defMax = boss.maxMin; }
+        const ov = bossRangeCache ? bossRangeCache[boss.id] : null;
+        const mn = ov ? parseInt(ov.min, 10) : NaN;
+        const mx = ov ? parseInt(ov.max, 10) : NaN;
+        if (ov && mn >= 1 && mx >= mn) { boss.minMin = mn; boss.maxMin = mx; }
+        else { boss.minMin = boss.defMin; boss.maxMin = boss.defMax; }
+      });
+    }
+
+    function selectBoss(boss) {
+      currentBoss = boss;
+      document.getElementById('current-boss-name').innerHTML = `
+        ${boss.name} 
+        <span id="room-display" class="room-badge">${ALLY_MODE ? '聯盟共享' : `小隊: ${roomId}`}</span>
+        <span id="version-display" class="version-badge">${APP_VERSION}</span>
+      `;
+      refreshBossHeaderInfo();
+      updateCycleSwitch();
+      initSidebar();
+      renderChannels();
+    }
+
+    function toggleSortMode() {
+      sortByTime = !sortByTime;
+      const btn = document.getElementById('sort-toggle-btn');
+      btn.innerText = sortByTime ? '排序：剩餘時間置頂' : '排序：頻道1~60';
+      btn.classList.toggle('on', sortByTime);
+      renderChannels();
+    }
+
+    function getChannelData(bossId, ch) {
+      const data = timerCache[bossId] && timerCache[bossId][`ch${ch}`];
+      if (!data) return { killTime: null, isSolo: false, isSteal: false, isUnsure: false, playerCdStartTime: null };
+      
+      if (typeof data === 'object') {
+        return {
+          killTime: data.killTime || null,
+          isSolo: !!data.isSolo,
+          isSteal: !!data.isSteal,
+          isUnsure: !!data.isUnsure,
+          playerCdStartTime: data.playerCdStartTime || null
+        };
+      }
+      return { killTime: data, isSolo: false, isSteal: false, isUnsure: false, playerCdStartTime: null };
+    }
+
+    /* ==========================================
+       更新頻道資料
+    ========================================== */
+    function updateChannelData(bossId, ch, newData) {
+      if (!isVersionValid) {
+        alert("版本不符合，無法執行此操作！");
+        return;
+      }
+
+      const targetRef = db.ref(`rooms/${roomId}/${bossId}/ch${ch}`);
+
+      if (!newData || (!newData.killTime && !newData.isSolo && !newData.isSteal && !newData.isUnsure && !newData.playerCdStartTime)) {
+        targetRef.remove().catch(writeFailed);
+      } else {
+        targetRef.set({
+          ...newData,
+          appVersion: APP_VERSION
+        }).catch(writeFailed);
+      }
+    }
+
+    // 寫入失敗的提示：區分「權限失效」與其他原因（以前一律誤報成版本過舊）
+    function writeFailed(err) {
+      if (isPermissionDenied(err)) {
+        alert(ALLY_MODE
+          ? "寫入被拒絕：聯盟密碼可能已被變更，或這隻野王已不再分享。請重新整理頁面，並重新輸入聯盟密碼。"
+          : "寫入被拒絕：小隊密碼可能已被變更。請重新整理頁面，並重新輸入新密碼。");
+      } else {
+        alert("操作失敗：請檢查網路連線後再試一次。");
+      }
+    }
+
+    // 註記：solo = 獨、steal = 搶、unsure = ?（不確定 / 可能遺失）。boss 預設為主畫面目前的王
+    function toggleNote(ch, type, boss = currentBoss) {
+      if (!isVersionValid) return;
+      const curData = getChannelData(boss.id, ch);
+      if (type === 'solo') {
+        curData.isSolo = !curData.isSolo;
+      } else if (type === 'steal') {
+        curData.isSteal = !curData.isSteal;
+      } else if (type === 'unsure') {
+        curData.isUnsure = !curData.isUnsure;
+      }
+      updateChannelData(boss.id, ch, curData);
+    }
+
+    function triggerPlayerCd(ch, customStartTime = Date.now()) {
+      if (!isVersionValid) return;
+      const curData = getChannelData(currentBoss.id, ch);
+      
+      updateChannelData(currentBoss.id, ch, {
+        killTime: curData.killTime,
+        isSolo: false,
+        isSteal: false,
+        playerCdStartTime: customStartTime
+      });
+    }
+
+    // 玩家點擊擊殺按鈕：直接記錄擊殺時間，進入王原本的冷卻時間
+    function handleKillClick(ch) {
+      if (!isVersionValid) return;
+      recordKill(ch, Date.now(), false);
+    }
+
+    function recordKill(ch, customKillTime = Date.now(), isAuto = false, boss = currentBoss) {
+      if (!isVersionValid) return;
+      updateChannelData(boss.id, ch, { 
+        killTime: customKillTime, 
+        isSolo: false, 
+        isSteal: false,
+        isUnsure: false,
+        playerCdStartTime: null 
+      });
+      
+      delete notifiedState[`${boss.id}_${ch}_before`];
+      delete notifiedState[`${boss.id}_${ch}_min`];
+      delete notifiedState[`${boss.id}_${ch}_max`];
+      
+      if (ALLY_MODE) { pushAllyKillEvent(boss, ch); return; } // 盟友沒有 Webhook：改寫入待發送區，由公會端發到公會 Discord
+      if (discordConfig.kill) {
+        const autoText = isAuto ? "【自動重新計時】" : "";
+        sendDiscordMsg(`⚔️ **【擊殺紀錄】** [${roomId}] **${killerName()}** 擊殺了 ${boss.name} - ${ch} 頻 ${autoText}`.trim());
+      }
+    }
+
+    function resetChannel(ch, boss = currentBoss) {
+      if (!isVersionValid) return;
+      updateChannelData(boss.id, ch, null);
+      delete notifiedState[`${boss.id}_${ch}_before`];
+      delete notifiedState[`${boss.id}_${ch}_min`];
+      delete notifiedState[`${boss.id}_${ch}_max`];
+    }
+
+    function clearCurrentBossData() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      if (confirm(`確定要清空 ${currentBoss.name} 的所有頻道時間嗎？`)) {
+        db.ref(`rooms/${roomId}/${currentBoss.id}`).remove();
+      }
+    }
+
+    function formatTime(date) {
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${hours}:${minutes}`;
+    }
+
+    /* ==========================================
+       【修正】純計算：依資料庫原始紀錄推算「目前所處的週期」
+       只在畫面上換算，絕對不寫回 Firebase，
+       所以太久沒開網頁也不會把原始擊殺時間蓋掉。
+    ========================================== */
+    function resolveChannelState(info, boss, playerCdSec, now, mode, manualSince) {
+      let kill = parseInt(info.killTime);
+      // 手動巡迴：不進入玩家冷卻與下一個循環，停在「已重生」，等玩家按「擊殺」。
+      // 若是由自動巡迴切換而來（manualSince），切換當下正在跑的那一輪要照常倒數完畢：
+      // 先用自動規則推算到切換時間點，取得當時那一輪的擊殺時間作為基準。
+      if (mode === 'manual') {
+        if (manualSince) {
+          const anchored = resolveChannelState(info, boss, playerCdSec, manualSince, 'auto');
+          return { kill: anchored.kill, cdStart: null };
+        }
+        return { kill: kill, cdStart: null };
+      }
+      let cdStart = info.playerCdStartTime ? parseInt(info.playerCdStartTime) : null;
+      const w = (boss.minMin === boss.maxMin ? boss.minMin : boss.maxMin) * 60 * 1000;
+      const cd = playerCdSec * 1000;
+
+      // 玩家冷卻已經結束：從冷卻結束那一刻重新起算（而不是「現在」）
+      if (cdStart !== null) {
+        if (now - cdStart >= cd) {
+          kill = cdStart + cd;
+          cdStart = null;
+        } else {
+          return { kill: kill, cdStart: cdStart };
+        }
+      }
+
+      let elapsed = now - kill;
+      if (elapsed >= w) {
+        if (cd > 0) {
+          const cycle = w + cd;
+          kill += Math.floor(elapsed / cycle) * cycle;
+          elapsed = now - kill;
+          if (elapsed >= w) {
+            cdStart = kill + w; // 正處於某一輪的玩家冷卻期間
+          }
+        } else {
+          kill += Math.floor(elapsed / w) * w;
+        }
+      }
+      return { kill: kill, cdStart: cdStart };
+    }
+
+    // 通知只在剛跨過門檻的 5 分鐘內發送，避免久未開啟網頁時瞬間洗版
+    const NOTIFY_WINDOW_SEC = 300;
+
+    // 已處理過的通知代號（附時間戳，定期清除舊的，避免記憶體持續增長）
+    function markNotified(key, fn) {
+      if (notifiedState[key]) return;
+      notifiedState[key] = Date.now();
+      fn();
+    }
+
+    let lastNotifyPrune = 0;
+    function pruneNotified(now) {
+      if (now - lastNotifyPrune < 60 * 1000) return;
+      lastNotifyPrune = now;
+      const cutoff = now - 60 * 60 * 1000;
+      Object.keys(notifiedState).forEach(k => { if (notifiedState[k] < cutoff) delete notifiedState[k]; });
+    }
+
+    function notifyIfNeeded(boss, ch, killTimeNum, elapsedSec) {
+      const minMinSec = boss.minMin * 60;
+      const tag = `${boss.id}_${ch}_${killTimeNum}`;
+      const beforeSec = (boss.minMin - 2) * 60;
+
+      if (discordConfig.before && beforeSec > 0 && elapsedSec >= beforeSec && elapsedSec < minMinSec && elapsedSec < beforeSec + NOTIFY_WINDOW_SEC) {
+        markNotified(`${tag}_before`, () =>
+          sendDiscordMsg(`⏳ **【重生預告】** [${roomId}] ${boss.name} - ${ch} 頻 將在 2 分鐘後可能重生！`, `${tag}_before`));
+      }
+      if (discordConfig.respawn && elapsedSec >= minMinSec && elapsedSec < minMinSec + NOTIFY_WINDOW_SEC) {
+        markNotified(`${tag}_min`, () =>
+          sendDiscordMsg(`⚠ **【可能重生】** [${roomId}] ${boss.name} - ${ch} 頻 已進入可能重生時間區間！`, `${tag}_min`));
+      }
+    }
+
+    // 每秒掃描「所有」Boss 的所有頻道（不論目前顯示哪一頁）：
+    // 統計左側圓圈、並在需要時發送重生預告／重生通知。
+    function scanAllBosses() {
+      const now = Date.now();
+      bosses.forEach(boss => {
+        const cdSec = getBossCdSec(boss.id);
+        const minMinSec = boss.minMin * 60;
+        let soon = 0, counting = 0;
+        for (let ch = 1; ch <= 60; ch++) {
+          const info = getChannelData(boss.id, ch);
+          if (!info.killTime) continue;
+          const st = resolveChannelState(info, boss, cdSec, now, getBossCycleMode(boss, ch), getBossManualSince(boss, ch));
+          if (st.cdStart) continue; // 玩家冷卻中：不列入、不通知
+          const elapsedSec = (now - st.kill) / 1000;
+          if (minMinSec - elapsedSec <= SOON_SEC) soon++; else counting++;
+          notifyIfNeeded(boss, ch, st.kill, elapsedSec);
+        }
+        bossCounts[boss.id] = { soon: soon, counting: counting };
+      });
+      pruneNotified(now);
+      updateSidebarBadges();
+      processOutbox();
+    }
+
+    // 每秒執行一次：掃描一定會做（通知不能停），畫面只在分頁可見時才更新
+    function tick() {
+      scanAllBosses();
+      if (!document.hidden) renderChannels();
+      updatePopout();
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) { scanAllBosses(); renderChannels(); }
+    });
+
+    /* ==========================================
+       頻道卡片：每個 Boss 只建立一次 60 張卡片，之後每秒只更新有變化的文字／樣式，
+       不再每秒重建整個畫面（減少 CPU、垃圾回收與記憶體壓力）。
+    ========================================== */
+    let gridBossId = null;
+    let cardRefs = {};
+    let lastOrderKey = '';
+
+    function buildGrid() {
+      const grid = document.getElementById('channel-grid');
+      grid.innerHTML = '';
+      cardRefs = {};
+      const locked = currentBoss.minMin !== currentBoss.maxMin;
+      const frag = document.createDocumentFragment();
+      const natural = [];
+      for (let ch = 1; ch <= 60; ch++) {
+        natural.push(ch);
+        const card = document.createElement('div');
+        card.className = 'channel-card';
+        card.innerHTML = `
+          <div class="note-badges-container">
+            <div class="note-badge badge-solo" onclick="toggleNote(${ch}, 'solo')" title="獨家發現 (點擊切換)">獨</div>
+            <div class="note-badge badge-steal" onclick="toggleNote(${ch}, 'steal')" title="必須搶奪 (點擊切換)">搶</div>
+            <div class="note-badge badge-unsure" onclick="toggleNote(${ch}, 'unsure')" title="不確定 / 可能遺失 (點擊切換)">?</div>
+          </div>
+          <div class="cycle-badge manual ${locked ? 'locked' : ''}" onclick="toggleChannelCycle(${ch})">手</div>
+          <div class="ch-title">${ch} 頻</div>
+          <div class="ch-status"></div>
+          <div class="ch-estimated-time"></div>
+          <div class="btn-group">
+            <button type="button" class="btn-ch" onclick="handleKillClick(${ch})">擊殺</button>
+            <button type="button" class="btn-ch reset" onclick="resetChannel(${ch})">重置</button>
+          </div>
+        `;
+        cardRefs[ch] = {
+          el: card,
+          solo: card.querySelector('.badge-solo'),
+          steal: card.querySelector('.badge-steal'),
+          unsure: card.querySelector('.badge-unsure'),
+          cyc: card.querySelector('.cycle-badge'),
+          status: card.querySelector('.ch-status'),
+          est: card.querySelector('.ch-estimated-time'),
+          cls: null, statusText: null, estText: null, soloOn: null, stealOn: null, unsureOn: null, cycKey: null
+        };
+        frag.appendChild(card);
+      }
+      grid.appendChild(frag);
+      gridBossId = currentBoss.id;
+      lastOrderKey = natural.join(',');
+    }
+
+    function renderChannels() {
+      if (gridBossId !== currentBoss.id) buildGrid();
+      const now = Date.now();
+      const playerCdSec = getBossCdSec(currentBoss.id);
+      const locked = currentBoss.minMin !== currentBoss.maxMin;
+      const minMin = currentBoss.minMin;
+      const maxMin = currentBoss.maxMin;
+      const minMinSec = minMin * 60;
+      const maxMinSec = maxMin * 60;
+
+      const items = [];
+      for (let ch = 1; ch <= 60; ch++) {
+        const chInfo = getChannelData(currentBoss.id, ch);
+        const cycleMode = getBossCycleMode(currentBoss, ch);
+        let remainingMs = Infinity;
+        let statusText = '尚未計時';
+        let estimatedText = '\u00a0';
+        let cardClass = '';
+        let hasTimerClass = '';
+
+        if (chInfo.killTime) {
+          const st = resolveChannelState(chInfo, currentBoss, playerCdSec, now, cycleMode, getBossManualSince(currentBoss, ch));
+          const killTimeNum = st.kill;
+          const elapsedSec = (now - killTimeNum) / 1000;
+          remainingMs = (killTimeNum + minMin * 60 * 1000) - now;
+          hasTimerClass = 'has-timer';
+
+          const estMinDate = new Date(killTimeNum + minMin * 60 * 1000);
+          if (minMin === maxMin) {
+            estimatedText = `預計 ${formatTime(estMinDate)}`;
+          } else {
+            estimatedText = `預計 ${formatTime(estMinDate)}~${formatTime(new Date(killTimeNum + maxMin * 60 * 1000))}`;
+          }
+
+          if (st.cdStart) {
+            const cdElapsedSec = (now - parseInt(st.cdStart)) / 1000;
+            cardClass = 'player-cd';
+            statusText = `冷卻中 ${Math.max(0, Math.ceil(playerCdSec - cdElapsedSec))}s`;
+          } else {
+            // 與左側列表相同的「即將重生」判斷（SOON_SEC）
+            if (minMinSec - elapsedSec <= SOON_SEC) hasTimerClass += ' soon';
+
+            if (elapsedSec < minMinSec) {
+              cardClass = 'counting';
+              const leftSec = Math.floor(minMinSec - elapsedSec);
+              const m = Math.floor(leftSec / 60);
+              const sec = leftSec % 60;
+              statusText = `${m}分${sec < 10 ? '0' : ''}${sec}秒`;
+            } else {
+              cardClass = 'maybe';
+              // 手動巡迴：停在此狀態直到按下「擊殺」
+              statusText = (minMin === maxMin || elapsedSec >= maxMinSec) ? '已重生' : '可能重生';
+            }
+          }
+        }
+
+        items.push({
+          ch: ch, remainingMs: remainingMs, statusText: statusText, estimatedText: estimatedText,
+          cls: `channel-card ${cardClass} ${hasTimerClass}`.replace(/\s+/g, ' ').trim(),
+          isSolo: chInfo.isSolo, isSteal: chInfo.isSteal, isUnsure: chInfo.isUnsure, cycleMode: cycleMode
+        });
+      }
+
+      if (sortByTime) {
+        items.sort((a, b) => a.remainingMs - b.remainingMs || a.ch - b.ch);
+      }
+
+      // 順序有變才重新排列 DOM
+      const orderKey = items.map(i => i.ch).join(',');
+      if (orderKey !== lastOrderKey) {
+        const grid = document.getElementById('channel-grid');
+        items.forEach(i => grid.appendChild(cardRefs[i.ch].el));
+        lastOrderKey = orderKey;
+      }
+
+      // 只更新有變化的部分
+      items.forEach(item => {
+        const r = cardRefs[item.ch];
+        if (r.cls !== item.cls) { r.el.className = item.cls; r.cls = item.cls; }
+        if (r.statusText !== item.statusText) { r.status.textContent = item.statusText; r.statusText = item.statusText; }
+        if (r.estText !== item.estimatedText) { r.est.textContent = item.estimatedText; r.estText = item.estimatedText; }
+        if (r.soloOn !== item.isSolo) { r.solo.classList.toggle('active', item.isSolo); r.soloOn = item.isSolo; }
+        if (r.stealOn !== item.isSteal) { r.steal.classList.toggle('active', item.isSteal); r.stealOn = item.isSteal; }
+        if (r.unsureOn !== item.isUnsure) { r.unsure.classList.toggle('active', item.isUnsure); r.unsureOn = item.isUnsure; }
+        const cycKey = item.cycleMode + (locked ? 'L' : '');
+        if (r.cycKey !== cycKey) {
+          const isAuto = item.cycleMode === 'auto';
+          r.cyc.className = `cycle-badge ${isAuto ? 'auto' : 'manual'} ${locked ? 'locked' : ''}`;
+          r.cyc.textContent = isAuto ? '自' : '手';
+          r.cyc.title = isAuto ? '自動巡迴（點擊切換為手動）' : (locked ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）');
+          r.cycKey = cycKey;
+        }
+      });
+    }
+
+    /* ==========================================
+       彈出置頂小視窗（預設 420x340，可自行拉大縮小，內容會等比縮放）：只顯示「頻道」「預計重生時間」與擊殺鈕，與主視窗即時同步。
+       - Chrome / Edge：使用 Document Picture-in-Picture，視窗會永遠浮在最上層。
+       - 其他瀏覽器：退回一般小視窗（無法保證置頂，可搭配作業系統的「視窗置頂」工具）。
+       小視窗綁定按下按鈕當下的那隻王，之後主視窗切換別隻王也不受影響。
+    ========================================== */
+    let popWin = null;
+    let popBoss = null;
+    let popSig = null;
+    let popTimer = null;
+    let popFlash = null;
+    let popCdEls = {};
+
+    const POPOUT_CSS = `
+      *{box-sizing:border-box}
+      html{font-size:clamp(9px,2.9412vw,28px)}
+      html,body{margin:0;height:100%}
+      body{display:flex;flex-direction:column;background:#f4eee0;color:#3a3226;font-family:"Microsoft JhengHei","PingFang TC",sans-serif;font-size:1rem;user-select:none}
+      button{font-family:inherit}
+      .hd{flex:0 0 3rem;display:flex;align-items:center;gap:0.5rem;padding:0 0.75rem;background:linear-gradient(135deg,#5c4327,#7d5c36);color:#fff;box-shadow:0 2px 6px rgba(60,40,10,.25);position:relative;z-index:1}
+      .hd .nm{flex:1;min-width:0;font-size:1.4167rem;font-weight:bold;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .seg{display:flex;border-radius:0.4167rem;overflow:hidden;background:rgba(255,255,255,.16)}
+      .seg button{border:0;background:transparent;color:#f3e9d6;font-size:1rem;padding:0.4583rem 0.8333rem;cursor:pointer;transition:background .15s}
+      .seg button+button{border-left:1px solid rgba(255,255,255,.2)}
+      .seg button:hover:not(:disabled):not(.on){background:rgba(255,255,255,.18)}
+      .seg button.on{background:#f3c969;color:#4a3519;font-weight:bold}
+      .seg button.arm{background:#e02424;color:#fff;font-weight:bold}
+      .seg button:disabled{opacity:.4;cursor:not-allowed}
+      .add{flex:0 0 auto;display:flex;gap:0.5rem;padding:0.5rem 0.75rem;background:#ebe3d0;border-bottom:1px solid #d8cdb2}
+      .add input{width:6rem;height:2.5rem;padding:0 0.6667rem;border:1px solid #cdbf9f;border-radius:0.5rem;background:#fff;font-size:1.3333rem;font-family:inherit;user-select:text;outline:none}
+      .add input:focus{border-color:#b8986c;box-shadow:0 0 0 2px rgba(184,152,108,.3)}
+      .add button{flex:1;height:2.5rem;border:0;border-radius:0.5rem;background:linear-gradient(#58b85c,#3f9d44);color:#fff;font-size:1.3333rem;font-weight:bold;letter-spacing:.1em;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.22)}
+      .add button:active,.row .kill:active{transform:scale(.96)}
+      .list{flex:1;overflow-y:auto;padding:0.6667rem 0.6667rem 0.25rem}
+      .list::-webkit-scrollbar{width:0.5rem}
+      .list::-webkit-scrollbar-thumb{background:#cbbf9f;border-radius:0.25rem}
+      .row{display:flex;align-items:center;gap:0.4167rem;min-height:2.75rem;margin-bottom:0.4167rem;padding:0.3333rem 0.5rem 0.3333rem 0.6667rem;background:#fff;border:1px solid #e4dccb;border-left:0.3333rem solid #16a34a;border-radius:0.6667rem;box-shadow:0 1px 3px rgba(60,40,10,.08)}
+      .row.soon{border-left-color:#e02424;background:#fff4f2}
+      .row.cd{border-left-color:#1abc9c;background:#effaf7}
+      .row.flash{animation:fl .7s ease-out}
+      @keyframes fl{0%{box-shadow:0 0 0 3px rgba(76,175,80,.8)}100%{box-shadow:0 1px 3px rgba(60,40,10,.08)}}
+      .mode{flex:0 0 1.75rem;height:1.75rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.9167rem;font-weight:bold;color:#fff;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .12s}
+      .mode:hover:not(.locked){transform:scale(1.15)}
+      .mode.auto{background:#4a6278}
+      .mode.manual{background:#e67e22}
+      .mode.locked{opacity:.5;cursor:not-allowed}
+      .row .c{flex:0 0 3.3rem;font-weight:bold;font-size:1.25rem;white-space:nowrap}
+      .row .t{flex:1;min-width:0;font-size:1rem;color:#8a7d66;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+      .nt{display:flex;gap:0.1667rem;flex:0 0 auto}
+      .row .n{width:1.5rem;height:1.5rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:0.875rem;font-weight:bold;line-height:1;border:1px solid #d3cab5;color:#b5ad9a;background:#fff;opacity:.55;cursor:pointer;transition:transform .1s,opacity .15s}
+      .row .n:hover{opacity:1;transform:scale(1.12)}
+      .row .n.on{opacity:1;background:#fff}
+      .row .n.on.solo{border-color:#e74c3c;color:#e74c3c;box-shadow:0 0 4px rgba(231,76,60,.5)}
+      .row .n.on.steal{border-color:#2980b9;color:#2980b9;box-shadow:0 0 4px rgba(41,128,185,.5)}
+      .row .n.on.unsure{border-color:#8e44ad;color:#8e44ad;box-shadow:0 0 4px rgba(142,68,173,.5)}
+      .row .cd{flex:0 0 4.4rem;text-align:right;font-size:1.5833rem;line-height:1;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums;color:#2d6a31}
+      .row .cd.long{font-size:1.0833rem}
+      .row.soon .cd{color:#c0392b}
+      .row.cd .cd{color:#14917a}
+      .row button{flex:0 0 3.5rem;height:2rem;padding:0;border:0;border-radius:0.4583rem;font-size:1.0833rem;font-weight:bold;cursor:pointer;transition:transform .08s,background .15s,filter .15s}
+      .row .kill{background:linear-gradient(#58b85c,#3f9d44);color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+      .row .kill:hover{filter:brightness(1.08)}
+      .row .rs{background:#ece6d6;color:#6b5f4c}
+      .row .rs:hover{background:#ddd3bb}
+      .row .rs.arm{background:#e02424;color:#fff}
+      .empty{padding:2rem 0.5rem;color:#9a8d73;text-align:center;line-height:1.8;font-size:1rem}
+    `;
+
+    function computePopoutRows(boss, now) {
+      const cdSec = getBossCdSec(boss.id);
+      const minMs = boss.minMin * 60 * 1000;
+      const maxMs = boss.maxMin * 60 * 1000;
+      const rows = [];
+      for (let ch = 1; ch <= 60; ch++) {
+        const info = getChannelData(boss.id, ch);
+        if (!info.killTime) continue;
+        const mode = getBossCycleMode(boss, ch);
+        const st = resolveChannelState(info, boss, cdSec, now, mode, getBossManualSince(boss, ch));
+        const remainMs = st.kill + minMs - now;
+
+        // 倒數文字（精確到秒），規則與主視窗卡片一致
+        let text;
+        if (st.cdStart) {
+          text = `冷卻 ${Math.max(0, Math.ceil(cdSec - (now - parseInt(st.cdStart)) / 1000))}s`;
+        } else if (remainMs > 0) {
+          const left = Math.floor(remainMs / 1000);
+          const sec = left % 60;
+          text = `${Math.floor(left / 60)}:${sec < 10 ? '0' : ''}${sec}`;
+        } else {
+          text = (boss.minMin === boss.maxMin || (now - st.kill) >= maxMs) ? '已重生' : '可能重生';
+        }
+
+        rows.push({
+          ch: ch,
+          mode: mode,
+          remainMs: remainMs,
+          time: formatTime(new Date(st.kill + minMs)),
+          time2: boss.minMin !== boss.maxMin ? formatTime(new Date(st.kill + maxMs)) : '',
+          solo: info.isSolo, steal: info.isSteal, unsure: info.isUnsure,
+          text: text,
+          cls: st.cdStart ? 'cd' : (remainMs / 1000 <= SOON_SEC ? 'soon' : '')
+        });
+      }
+      rows.sort((a, b) => a.remainMs - b.remainMs || a.ch - b.ch);
+      return rows;
+    }
+
+    // 標題列的「全自動／全手動」按鈕狀態（60 個頻道全部相同才會亮起）
+    function updatePopSeg() {
+      const d = popWin.document;
+      const a = d.getElementById('pa'), m = d.getElementById('pm');
+      if (!a || !m) return;
+      const all = getBossAllMode(popBoss);
+      const canAuto = popBoss.minMin === popBoss.maxMin;
+      a.classList.toggle('on', all === 'auto');
+      m.classList.toggle('on', all === 'manual');
+      a.disabled = !canAuto;
+      a.title = canAuto ? '將此王所有頻道切換為自動巡迴（點兩下確認）' : '重生時間為區間的王只能手動巡迴';
+      m.title = '將此王所有頻道切換為手動巡迴（點兩下確認）';
+    }
+
+    // 與主視窗同步：資料更新時、每秒都會呼叫。
+    // 列表結構（頻道、順序、顏色、巡迴模式）有變才重畫；平常每秒只更新倒數文字。
+    function updatePopout() {
+      if (!popWin) return;
+      if (popWin.closed) { cleanupPopout(); return; }
+      const list = popWin.document.getElementById('pl');
+      if (!list) return;
+      const locked = popBoss.minMin !== popBoss.maxMin;
+      const rows = computePopoutRows(popBoss, Date.now());
+      const sig = rows.map(r => `${r.ch}|${r.time}|${r.time2}|${r.cls}|${r.mode}|${r.solo ? 1 : 0}${r.steal ? 1 : 0}${r.unsure ? 1 : 0}`).join(',');
+      if (sig !== popSig) {
+        popSig = sig;
+        list.innerHTML = rows.length
+          ? rows.map(r => {
+              const isAuto = r.mode === 'auto';
+              const tip = isAuto ? '自動巡迴（點擊切換為手動）' : (locked ? '區間王只能手動巡迴' : '手動巡迴（點擊切換為自動）');
+              const timeText = r.time2 ? `${r.time}~${r.time2}` : r.time;
+              return `<div class="row ${r.cls}${popFlash === r.ch ? ' flash' : ''}">`
+                + `<span class="mode ${isAuto ? 'auto' : 'manual'}${locked ? ' locked' : ''}" data-act="cycle" data-ch="${r.ch}" title="${tip}">${isAuto ? '自' : '手'}</span>`
+                + `<span class="c">${r.ch} 頻</span>`
+                + `<span class="t"${r.time2 ? ' title="重生時間區間"' : ''}>${timeText}</span>`
+                + `<span class="nt">`
+                + `<i class="n solo${r.solo ? ' on' : ''}" data-act="note" data-type="solo" data-ch="${r.ch}" title="獨家發現（點擊切換）">獨</i>`
+                + `<i class="n steal${r.steal ? ' on' : ''}" data-act="note" data-type="steal" data-ch="${r.ch}" title="必須搶奪（點擊切換）">搶</i>`
+                + `<i class="n unsure${r.unsure ? ' on' : ''}" data-act="note" data-type="unsure" data-ch="${r.ch}" title="不確定 / 可能遺失（點擊切換）">?</i></span>`
+                + `<span class="cd" data-ch="${r.ch}"></span>`
+                + `<button type="button" class="kill" data-act="kill" data-ch="${r.ch}">擊殺</button>`
+                + `<button type="button" class="rs" data-act="reset" data-ch="${r.ch}">重置</button></div>`;
+            }).join('')
+          : '<div class="empty">目前沒有計時中的頻道<br>在上方輸入頻道號碼，按「擊殺」開始計時</div>';
+        popFlash = null;
+        popCdEls = {};
+        list.querySelectorAll('.cd[data-ch]').forEach(el => { popCdEls[el.dataset.ch] = el; });
+      }
+      rows.forEach(r => {
+        const el = popCdEls[r.ch];
+        if (el && el.textContent !== r.text) {
+          el.textContent = r.text;
+          el.classList.toggle('long', !/^[\d:]+$/.test(r.text)); // 文字型狀態（已重生等）縮小字級避免被截斷
+        }
+      });
+      updatePopSeg();
+    }
+
+    function popKill(ch) {
+      if (!popBoss || !(ch >= 1 && ch <= 60)) return;
+      recordKill(ch, Date.now(), false, popBoss);
+      popFlash = ch; // 擊殺後該列短暫閃一下綠光
+      popSig = null; // 立即重畫
+      updatePopout();
+    }
+
+    function popReset(ch) {
+      if (!popBoss || !(ch >= 1 && ch <= 60)) return;
+      resetChannel(ch, popBoss);
+      popSig = null;
+      updatePopout();
+    }
+
+    function popCycle(ch) {
+      if (!popBoss || popBoss.minMin !== popBoss.maxMin) return; // 區間王只能手動，不可切換
+      toggleChannelCycle(ch, popBoss);
+    }
+
+    // 兩段式確認：第一下變成紅色「確定?」，2.5 秒內再按一次才執行（小視窗按鈕小，避免誤觸）
+    function armClick(w, btn, label, onConfirm) {
+      if (btn.dataset.armed === '1') {
+        btn.dataset.armed = '';
+        btn.classList.remove('arm');
+        btn.textContent = label;
+        onConfirm();
+        return;
+      }
+      btn.dataset.armed = '1';
+      btn.classList.add('arm');
+      btn.textContent = '確定?';
+      w.setTimeout(() => {
+        if (btn.isConnected && btn.dataset.armed === '1') {
+          btn.dataset.armed = '';
+          btn.classList.remove('arm');
+          btn.textContent = label;
+        }
+      }, 2500);
+    }
+
+    function cleanupPopout() {
+      if (popTimer && popWin) { try { popWin.clearInterval(popTimer); } catch (e) {} }
+      popTimer = null;
+      popWin = null;
+      popBoss = null;
+      popSig = null;
+      popFlash = null;
+    }
+
+    function closePopout() {
+      if (popWin) { try { popWin.close(); } catch (e) {} }
+      cleanupPopout();
+    }
+
+    function setupPopout(w) {
+      const doc = w.document;
+      doc.title = popBoss.name;
+      const style = doc.createElement('style');
+      style.textContent = POPOUT_CSS;
+      doc.head.appendChild(style);
+      doc.body.innerHTML = `
+        <div class="hd"><span class="nm" id="ph"></span>
+          <div class="seg"><button type="button" id="pa">全自動</button><button type="button" id="pm">全手動</button></div>
+        </div>
+        <div class="add"><input id="pch" type="number" min="1" max="60" placeholder="頻道"><button type="button" id="pk">擊殺</button></div>
+        <div class="list" id="pl"></div>`;
+      doc.getElementById('ph').textContent = popBoss.name;
+      if (ALLY_MODE) doc.querySelector('.seg').style.display = 'none'; // 盟友不能全體切換巡迴模式
+
+      const input = doc.getElementById('pch');
+      const addKill = () => {
+        const ch = parseInt(input.value, 10);
+        if (!(ch >= 1 && ch <= 60)) { input.focus(); input.select(); return; }
+        popKill(ch);
+        input.value = '';
+        input.focus();
+      };
+      doc.getElementById('pk').addEventListener('click', addKill);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') addKill(); });
+
+      // 全體切換（兩段式確認）
+      const pa = doc.getElementById('pa'), pm = doc.getElementById('pm');
+      const segClick = (btn, mode, label) => {
+        if (btn.disabled || getBossAllMode(popBoss) === mode) return;
+        armClick(w, btn, label, () => setBossCycleMode(mode, popBoss, true));
+      };
+      pa.addEventListener('click', () => segClick(pa, 'auto', '全自動'));
+      pm.addEventListener('click', () => segClick(pm, 'manual', '全手動'));
+
+      doc.getElementById('pl').addEventListener('click', e => {
+        const el = e.target.closest('[data-act]');
+        if (!el) return;
+        const ch = parseInt(el.dataset.ch, 10);
+        if (el.dataset.act === 'kill') popKill(ch);
+        else if (el.dataset.act === 'cycle') popCycle(ch);
+        else if (el.dataset.act === 'note') toggleNote(ch, el.dataset.type, popBoss);
+        else if (el.dataset.act === 'reset') armClick(w, el, '重置', () => popReset(ch));
+      });
+
+      w.addEventListener('pagehide', cleanupPopout);
+      popWin = w;
+      popSig = null;
+      // 用小視窗自己的計時器更新：主分頁在背景時，主視窗的計時器可能被瀏覽器降速
+      popTimer = w.setInterval(() => {
+        if (document.hidden) scanAllBosses(); // 主分頁在背景時，由小視窗代為維持通知掃描
+        updatePopout();
+      }, 1000);
+      updatePopout();
+      input.focus();
+    }
+
+    async function openPopout() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      if (sessionStorage.getItem(UNLOCK_KEY) !== 'true') { alert("請先解鎖計時區！"); return; }
+
+      // 已開啟：直接改為目前這隻王，不重開視窗
+      if (popWin && !popWin.closed) {
+        popBoss = currentBoss;
+        popWin.document.title = popBoss.name;
+        popWin.document.getElementById('ph').textContent = popBoss.name;
+        popSig = null;
+        updatePopout();
+        try { popWin.focus(); } catch (e) {}
+        return;
+      }
+
+      popBoss = currentBoss;
+      let w = null;
+      if (window.documentPictureInPicture) {
+        try {
+          w = await window.documentPictureInPicture.requestWindow({ width: 420, height: 340 });
+        } catch (e) { w = null; }
+      }
+      if (!w) {
+        w = window.open('', 'boss-popout', 'popup=yes,width=420,height=340,resizable=yes');
+        if (!w) { alert("瀏覽器擋住了小視窗，請允許此網站的彈出視窗後再試一次。"); popBoss = null; return; }
+        w.document.open();
+        w.document.write('<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>');
+        w.document.close();
+      }
+      setupPopout(w);
+    }
+    window.addEventListener('pagehide', closePopout);
+
+    // 擊殺者名稱：使用登入時輸入的暱稱 / ID（尚未設定時以「訪客＋編號」代替）。
+    // 暱稱是使用者自己輸入的內容：跳脫 Discord 的格式符號，並把 @ 後面插入零寬空白，避免被當成標記他人。
+    // 把暱稱轉成可安全放進 Discord 訊息的文字（跳脫格式符號、讓 @ 不會真的提及任何人）
+    function escapeDiscord(raw) {
+      return String(raw).replace(/([\\*_~`|>:#\[\]()])/g, '\\$1').replace(/@/g, '@\u200b');
+    }
+
+    function killerName() {
+      return escapeDiscord(myNick || (myUid ? `訪客${String(myUid).slice(0, 4)}` : '有人'));
+    }
+
+    function postToDiscord(url, content, onFail) {
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // allowed_mentions.parse = []：訊息中即使出現 @everyone / @人名，也不會真的通知任何人
+        body: JSON.stringify({ content: content, allowed_mentions: { parse: [] } })
+      }).then(res => {
+        if (!res.ok && onFail) onFail();
+      }).catch(err => {
+        console.error('Discord Webhook 發送失敗:', err);
+        if (onFail) onFail();
+      });
+    }
+
+    // claimKey：同一則通知的唯一代號。多人同時開著網頁時，
+    // 只有第一個成功「搶到發送權」（資料庫交易寫入代號）的人會真正發送，其他人略過，避免重複通知。
+    function sendDiscordMsg(content, claimKey) {
+      if (!isVersionValid) return;
+      if (!discordConfig.enabled) return; // 通知總開關關閉時不發送（也不會去搶發送權）
+      const url = DEFAULT_WEBHOOK_URL; // 由資料庫 rooms/<小隊>/discordWebhook 提供，不可在網頁修改
+      if (!url) return;
+
+      if (!claimKey) { postToDiscord(url, content); return; }
+
+      const safeKey = String(claimKey).replace(/[.#$\[\]\/]/g, '_');
+      const claimRef = db.ref(`rooms/${roomId}/discordSent/${safeKey}`);
+      claimRef.transaction(cur => (cur === null ? Date.now() : undefined)).then(result => {
+        if (!result.committed) return; // 已有人搶先發送
+        // 發送失敗時釋放發送權，讓其他人有機會補發
+        postToDiscord(url, content, () => { claimRef.remove().catch(() => {}); });
+        pruneDiscordClaims();
+      }).catch(() => { /* 無法取得發送權（例如網路問題）：不發送，避免重複 */ });
+    }
+
+    // 清掉超過 6 小時的發送紀錄，避免資料庫愈積愈多
+    function pruneDiscordClaims() {
+      const claims = (timerCache && timerCache.discordSent) || {};
+      const cutoff = Date.now() - 6 * 60 * 60 * 1000;
+      const upd = {};
+      Object.keys(claims).forEach(k => { if (typeof claims[k] === 'number' && claims[k] < cutoff) upd[k] = null; });
+      if (Object.keys(upd).length) db.ref(`rooms/${roomId}/discordSent`).update(upd).catch(() => {});
+    }
+
+    // 側邊欄一鍵開關 Discord 通知（只影響這台瀏覽器）
+    function updateDiscordToggleBtn() {
+      const btn = document.getElementById('discord-toggle-btn');
+      if (!btn) return;
+      btn.innerText = discordConfig.enabled ? '🔔 通知：開' : '🔕 通知：關';
+      btn.classList.toggle('off', !discordConfig.enabled);
+    }
+
+    function toggleDiscordEnabled() {
+      discordConfig.enabled = !discordConfig.enabled;
+      localStorage.setItem('discord_config', JSON.stringify(discordConfig));
+      updateDiscordToggleBtn();
+    }
+
+    function openDiscordModal() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      document.getElementById('notifyEnabled').checked = discordConfig.enabled;
+      document.getElementById('notifyBefore').checked = discordConfig.before;
+      document.getElementById('notifyRespawn').checked = discordConfig.respawn;
+      document.getElementById('notifyKill').checked = discordConfig.kill;
+      document.getElementById('discordModal').style.display = 'flex';
+    }
+
+    function closeDiscordModal() {
+      document.getElementById('discordModal').style.display = 'none';
+    }
+
+    function saveDiscordConfig() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      discordConfig = {
+        enabled: document.getElementById('notifyEnabled').checked,
+        before: document.getElementById('notifyBefore').checked,
+        respawn: document.getElementById('notifyRespawn').checked,
+        kill: document.getElementById('notifyKill').checked
+      };
+      localStorage.setItem('discord_config', JSON.stringify(discordConfig));
+      updateDiscordToggleBtn();
+      alert('Discord 通知設定已儲存！');
+      closeDiscordModal();
+    }
+
+    function removeDiscordConfig() {
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      discordConfig = { enabled: discordConfig.enabled, before: true, respawn: true, kill: true };
+      localStorage.setItem('discord_config', JSON.stringify(discordConfig));
+      alert('已還原通知選項預設值！');
+      closeDiscordModal();
+    }
+
+    /* ==========================================
+       暱稱與線上人員
+       - 登入時輸入暱稱 / ID，儲存在這台瀏覽器（與這組匿名登入綁在一起），下次自動帶入。
+       - 解鎖後在 presence/<小隊>/<uid>_<分頁代號> 寫入自己的名字，斷線時由伺服器自動移除；
+         另外每分鐘更新一次 lastSeen，萬一沒被移除，逾時的紀錄在畫面上會被忽略。
+       - 同一個人開多個分頁只算 1 人。
+    ========================================== */
+    let myNick = '';
+    try { myNick = (localStorage.getItem('boss_nickname') || '').trim(); } catch (e) {}
+    let myUid = null;
+    let presenceStarted = false;
+    let presenceRef = null;
+    let presenceCache = {};
+    let presenceHeartbeat = null;
+    let presenceRefresh = null;
+    let serverOffset = 0;
+    const presenceConnId = Math.random().toString(36).slice(2, 8);
+    const PRESENCE_STALE_MS = 240 * 1000;
+
+    function sanitizeNick(v) {
+      return String(v || '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 12);
+    }
+
+    function presenceName(uid) {
+      return myNick || `訪客${String(uid).slice(0, 4)}`;
+    }
+
+    function startPresence() {
+      if (ALLY_MODE || presenceStarted) return; // 盟友版不使用線上人員名單
+      presenceStarted = true;
+      authReady.then(user => {
+        if (!presenceStarted) return;
+        myUid = user.uid;
+        const TS = firebase.database.ServerValue.TIMESTAMP;
+        const ref = db.ref(`presence/${roomId}/${user.uid}_${presenceConnId}`);
+        presenceRef = ref;
+
+        db.ref('.info/serverTimeOffset').on('value', snap => { serverOffset = snap.val() || 0; });
+        // 每次（重新）連線都重新登記：先登記斷線自動移除，再寫入自己
+        db.ref('.info/connected').on('value', snap => {
+          if (snap.val() !== true || presenceRef !== ref) return;
+          ref.onDisconnect().remove()
+            .then(() => ref.set({ name: presenceName(user.uid), uid: user.uid, since: TS, lastSeen: TS }))
+            .catch(() => {});
+        });
+        presenceHeartbeat = setInterval(() => {
+          if (presenceRef === ref) ref.child('lastSeen').set(TS).catch(() => {});
+        }, 60 * 1000);
+        presenceRefresh = setInterval(renderOnline, 30 * 1000);
+
+        db.ref(`presence/${roomId}`).on('value', snap => {
+          presenceCache = snap.val() || {};
+          renderOnline();
+        }, () => {});
+
+        if (!myNick) promptNickname(); // 舊版已解鎖、尚未設定暱稱的人
+      }).catch(() => { presenceStarted = false; });
+    }
+
+    function stopPresence() {
+      if (!presenceStarted) return;
+      presenceStarted = false;
+      clearInterval(presenceHeartbeat);
+      clearInterval(presenceRefresh);
+      try {
+        db.ref('.info/connected').off();
+        db.ref('.info/serverTimeOffset').off();
+        db.ref(`presence/${roomId}`).off();
+      } catch (e) {}
+      if (presenceRef) {
+        const ref = presenceRef;
+        presenceRef = null;
+        ref.onDisconnect().cancel().catch(() => {});
+        ref.remove().catch(() => {});
+      }
+      presenceCache = {};
+      renderOnline();
+    }
+
+    function updatePresenceName() {
+      if (presenceRef && myUid) presenceRef.child('name').set(presenceName(myUid)).catch(() => {});
+    }
+
+    // 以人（uid）為單位彙整線上名單；忽略逾時未更新的紀錄
+    function getOnlineUsers() {
+      const now = Date.now() + serverOffset;
+      const byUid = {};
+      Object.keys(presenceCache || {}).forEach(k => {
+        const v = presenceCache[k];
+        if (!v || !v.uid) return;
+        const seen = typeof v.lastSeen === 'number' ? v.lastSeen : (typeof v.since === 'number' ? v.since : now);
+        if (now - seen > PRESENCE_STALE_MS) return;
+        const since = typeof v.since === 'number' ? v.since : now;
+        const cur = byUid[v.uid];
+        if (!cur) {
+          byUid[v.uid] = { uid: v.uid, name: String(v.name || '').slice(0, 20) || '訪客', since: since, tabs: 1 };
+        } else {
+          cur.tabs++;
+          if (since < cur.since) cur.since = since;
+        }
+      });
+      return Object.keys(byUid).map(k => byUid[k]).sort((a, b) => a.since - b.since);
+    }
+
+    function fillOnlineList(users) {
+      const list = document.getElementById('onlineList');
+      document.getElementById('onlineCount').textContent = users.length;
+      list.innerHTML = '';
+      if (!users.length) {
+        const empty = document.createElement('div');
+        empty.className = 'online-empty';
+        empty.textContent = '目前沒有線上人員資料';
+        list.appendChild(empty);
+        return;
+      }
+      users.forEach(u => {
+        const row = document.createElement('div');
+        row.className = 'online-row' + (u.uid === myUid ? ' me' : '');
+        const dot = document.createElement('span'); dot.className = 'dot';
+        const nm = document.createElement('span'); nm.className = 'nm';
+        nm.textContent = u.name + (u.uid === myUid ? '（我）' : '');
+        const meta = document.createElement('span'); meta.className = 'meta';
+        meta.textContent = `上線 ${formatTime(new Date(u.since))}` + (u.tabs > 1 ? ` ・${u.tabs} 個分頁` : '');
+        row.appendChild(dot); row.appendChild(nm); row.appendChild(meta);
+        list.appendChild(row);
+      });
+    }
+
+    function renderOnline() {
+      const users = getOnlineUsers();
+      const btn = document.getElementById('online-btn');
+      if (btn) btn.textContent = `線上 ${users.length} 人`;
+      const modal = document.getElementById('onlineModal');
+      if (modal && modal.style.display === 'flex') fillOnlineList(users);
+    }
+
+    function openOnlineModal() {
+      document.getElementById('nickEditInput').value = myNick;
+      document.getElementById('nickHint').style.display = 'none';
+      document.getElementById('onlineModal').style.display = 'flex';
+      fillOnlineList(getOnlineUsers());
+    }
+
+    function promptNickname() {
+      document.getElementById('nickEditInput').value = '';
+      document.getElementById('nickHint').style.display = 'block';
+      document.getElementById('onlineModal').style.display = 'flex';
+      fillOnlineList(getOnlineUsers());
+      document.getElementById('nickEditInput').focus();
+    }
+
+    function closeOnlineModal() {
+      document.getElementById('onlineModal').style.display = 'none';
+    }
+
+    function saveMyNickname() {
+      const nick = sanitizeNick(document.getElementById('nickEditInput').value);
+      if (!nick) { alert("請輸入暱稱或 ID！"); return; }
+      myNick = nick;
+      try { localStorage.setItem('boss_nickname', nick); } catch (e) {}
+      document.getElementById('nickHint').style.display = 'none';
+      updatePresenceName();
+      // 本機先行更新，不必等伺服器回傳
+      Object.keys(presenceCache || {}).forEach(k => {
+        if (presenceCache[k] && presenceCache[k].uid === myUid) presenceCache[k].name = nick;
+      });
+      renderOnline();
+    }
+
+    /* ==========================================
+       複製這隻王所有「有記錄」的頻道與重生時間（純文字，一行一個頻道）
+       例：18頻 10:18　／　區間王：7頻 10:30~10:45
+       一律依重生時間由早到晚排列
+    ========================================== */
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) { /* 改用備援方式 */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e) { return false; }
+    }
+
+    let copyBtnTimer = null;
+    async function copyBossRecords() {
+      const rows = computePopoutRows(currentBoss, Date.now());
+      if (!rows.length) { alert(`【${currentBoss.name}】目前沒有任何頻道記錄！`); return; }
+      // 一律依重生時間由早到晚排列（同時間再依頻道號碼），與主畫面的排序設定無關
+      rows.sort((a, b) => a.remainMs - b.remainMs || a.ch - b.ch);
+      const text = rows.map(r => `${r.ch}頻 ${r.time2 ? `${r.time}~${r.time2}` : r.time}`).join('\n');
+
+      const btn = document.getElementById('copy-btn');
+      const ok = await copyText(text);
+      clearTimeout(copyBtnTimer);
+      btn.textContent = ok ? `已複製 ${rows.length} 筆` : '複製失敗';
+      copyBtnTimer = setTimeout(() => { btn.textContent = '複製記錄'; }, 1600);
+      if (!ok) alert("瀏覽器不允許複製，請改用 https 網址開啟，或手動選取內容複製。");
+    }
+
+    /* ==========================================
+       聯盟共享
+       - 公會版（index.html）：管理員可勾選要分享給聯盟的野王（sharedBosses），並設定聯盟密碼。
+         盟友在 ally.html 輸入「聯盟密碼」登入，只能讀寫被勾選的野王（資料庫規則在伺服器端強制）。
+       - 盟友按「擊殺」時，因為拿不到 Webhook，改寫入 rooms/<小隊>/outbox；
+         公會端網頁（或 Cloudflare Worker）看到後，以「搶發送權」方式只發一則到公會的 Discord。
+    ========================================== */
+    function visibleBosses() {
+      if (!ALLY_MODE) return bosses;
+      const shared = (timerCache && timerCache.sharedBosses) || {};
+      return bosses.filter(b => shared[b.id]);
+    }
+
+    function openShareModal() {
+      if (ALLY_MODE) return;
+      if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
+      document.getElementById('shareAdminKey').value = '';
+      document.getElementById('shareAllyPass').value = '';
+      const shared = (timerCache && timerCache.sharedBosses) || {};
+      const box = document.getElementById('shareBossList');
+      box.innerHTML = '';
+      bosses.forEach(b => {
+        const row = document.createElement('label');
+        row.className = 'share-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = b.id;
+        cb.checked = !!shared[b.id];
+        const name = document.createElement('span');
+        name.textContent = b.name;
+        row.appendChild(cb);
+        row.appendChild(name);
+        box.appendChild(row);
+      });
+      document.getElementById('shareModal').style.display = 'flex';
+    }
+
+    function closeShareModal() {
+      document.getElementById('shareModal').style.display = 'none';
+    }
+
+    function saveShareSettings() {
+      if (ALLY_MODE || !isVersionValid) return;
+      const adminKey = document.getElementById('shareAdminKey').value.trim();
+      if (!adminKey) { alert("請輸入管理員金鑰！"); return; }
+      const pass = document.getElementById('shareAllyPass').value.trim();
+      if (pass && pass.length < 8) { alert("聯盟密碼至少需要 8 個字元！"); return; }
+      const ids = Array.from(document.querySelectorAll('#shareBossList input:checked')).map(i => i.value);
+      const obj = {};
+      ids.forEach(id => { obj[id] = true; });
+
+      withAdmin(adminKey, () => Promise.all([
+        db.ref(`rooms/${roomId}/sharedBosses`).set(ids.length ? obj : null),
+        pass ? db.ref(`secrets/${roomId}/allyPassword`).set(pass) : Promise.resolve()
+      ])).then(() => {
+        alert(`已更新聯盟共享：目前共分享 ${ids.length} 隻野王${pass ? '，聯盟密碼已更新' : ''}。`);
+        closeShareModal();
+      }).catch(err => {
+        if (err && err.stage === 'key') alert("【權限不足】管理者金鑰錯誤！");
+        else alert("寫入資料庫失敗，請確認資料庫規則已更新後重試！");
+      });
+    }
+
+    // ---- 盟友版：只監聽被分享的野王 ----
+    let allyData = { sharedBosses: {}, bossCdSettings: {}, bossRangeSettings: {}, bossCycleSettings: {} };
+    let allyBossRefs = {};
+    let allyRenderTimer = null;
+    const ALLY_SETTING_KEYS = ['sharedBosses', 'bossCdSettings', 'bossRangeSettings', 'bossCycleSettings'];
+
+    function scheduleAllyRender() {
+      if (allyRenderTimer) return;
+      allyRenderTimer = setTimeout(() => {
+        allyRenderTimer = null;
+        ALLY_SETTING_KEYS.forEach(k => { timerCache[k] = allyData[k]; });
+        bossCdCache = allyData.bossCdSettings;
+        bossCycleCache = allyData.bossCycleSettings;
+        bossRangeCache = allyData.bossRangeSettings;
+        applyBossOverrides();
+        const vis = visibleBosses();
+        if (vis.length && vis.indexOf(currentBoss) === -1) { selectBoss(vis[0]); }
+        refreshBossHeaderInfo();
+        updateCycleSwitch();
+        scanAllBosses();
+        initSidebar();
+        renderChannels();
+        updatePopout();
+      }, 30);
+    }
+
+    function syncAllyBossListeners() {
+      const shared = allyData.sharedBosses || {};
+      Object.keys(allyBossRefs).forEach(id => {
+        if (!shared[id]) { allyBossRefs[id].off(); delete allyBossRefs[id]; delete timerCache[id]; }
+      });
+      Object.keys(shared).forEach(id => {
+        if (!shared[id] || allyBossRefs[id]) return;
+        const ref = db.ref(`rooms/${roomId}/${id}`);
+        allyBossRefs[id] = ref;
+        ref.on('value', snap => { timerCache[id] = snap.val() || {}; scheduleAllyRender(); }, () => { /* 已取消分享 */ });
+      });
+    }
+
+    function listenAlly() {
+      authReady.then(() => {
+        ALLY_SETTING_KEYS.forEach(k => {
+          const ref = db.ref(`rooms/${roomId}/${k}`);
+          ref.off();
+          ref.on('value', snap => {
+            allyData[k] = snap.val() || {};
+            if (k === 'sharedBosses') syncAllyBossListeners();
+            scheduleAllyRender();
+          }, () => { logout(); }); // 聯盟密碼已變更或權限失效
+        });
+      }).catch(() => {});
+    }
+
+    function stopAllyListeners() {
+      Object.keys(allyBossRefs).forEach(id => { try { allyBossRefs[id].off(); } catch (e) {} });
+      allyBossRefs = {};
+      ALLY_SETTING_KEYS.forEach(k => { try { db.ref(`rooms/${roomId}/${k}`).off(); } catch (e) {} });
+      timerCache = {};
+    }
+
+    // ---- 盟友擊殺 → 待發送區（outbox） ----
+    function pushAllyKillEvent(boss, ch) {
+      db.ref(`rooms/${roomId}/outbox`).push({
+        boss: boss.id,
+        ch: ch,
+        by: sanitizeNick(myNick) || '盟友',
+        ts: firebase.database.ServerValue.TIMESTAMP
+      }).catch(() => {});
+    }
+
+    // ---- 公會端：處理盟友的擊殺通知（與 Worker 共用 outbox_<id> 發送權代號，只會發一則） ----
+    let lastOutboxPrune = 0;
+    function buildAllyKillText(ev) {
+      const boss = bosses.find(b => b.id === ev.boss);
+      const ch = parseInt(ev.ch, 10);
+      if (!boss || !(ch >= 1 && ch <= 60)) return null;
+      const by = sanitizeNick(ev.by) || '盟友';
+      return `⚔️ **【擊殺紀錄】** [${roomId}] 【聯盟】**${escapeDiscord(by)}** 擊殺了 ${boss.name} - ${ch} 頻`;
+    }
+
+    function processOutbox() {
+      if (ALLY_MODE) return;
+      const box = timerCache && timerCache.outbox;
+      if (!box) return;
+      const now = Date.now();
+      let handled = 0;
+      Object.keys(box).forEach(id => {
+        const ev = box[id];
+        if (!ev || typeof ev.ts !== 'number') return;
+        if (now - ev.ts > 10 * 60 * 1000) return;           // 太舊的不補發
+        if (!discordConfig.enabled || !discordConfig.kill) return; // 這台關閉擊殺通知就不去搶發送權
+        const key = `outbox_${id}`;
+        if (notifiedState[key]) return;
+        if (handled >= 10) return;                           // 每秒最多處理 10 則，避免被灌爆
+        const text = buildAllyKillText(ev);
+        if (!text) return;
+        handled++;
+        markNotified(key, () => sendDiscordMsg(text, key));
+      });
+      // 清掉超過 6 小時的紀錄
+      if (now - lastOutboxPrune > 60 * 1000) {
+        lastOutboxPrune = now;
+        const upd = {};
+        Object.keys(box).forEach(id => {
+          if (!box[id] || typeof box[id].ts !== 'number' || box[id].ts < now - 6 * 60 * 60 * 1000) upd[id] = null;
+        });
+        if (Object.keys(upd).length) db.ref(`rooms/${roomId}/outbox`).update(upd).catch(() => {});
+      }
+    }
+
+    // 盟友版：調整畫面文字
+    if (ALLY_MODE) {
+      document.body.classList.add('ally-mode');
+      document.title = '楓之谷 Boss 計時器（聯盟共享版）';
+      const fogP = document.querySelector('#fog-overlay .fog-box p');
+      if (fogP) fogP.textContent = '請輸入暱稱 / ID 與聯盟密碼解鎖內容';
+      const rd = document.getElementById('room-display');
+      if (rd) rd.textContent = '聯盟共享';
+    }
+
+    // 初始化流程
+    checkFogAuth();
+    updateDiscordToggleBtn();
+    initVersionCheck();
+    listenToFirebase();
+    setInterval(tick, 1000);
+    selectBoss(bosses[0]);
+  </script>
+</body>
+</html>
