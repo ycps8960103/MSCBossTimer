@@ -932,9 +932,18 @@
       const value = (mode === 'manual' && boss.minMin === boss.maxMin)
         ? { mode: 'manual', since: Date.now() }
         : { mode: mode };
-      db.ref(`rooms/${roomId}/bossCycleSettings/${boss.id}`).set(value).catch(() => {
-        alert("寫入資料庫失敗，請重試！");
-      });
+      db.ref(`rooms/${roomId}/bossCycleSettings/${boss.id}`).set(value).catch(cycleWriteFailed);
+    }
+
+    // 切換巡迴模式寫入失敗：區分「權限被拒（密碼已變更／資料庫規則未更新）」與一般連線問題
+    function cycleWriteFailed(err) {
+      if (isPermissionDenied(err)) {
+        alert(ALLY_MODE
+          ? "寫入被拒絕：聯盟密碼可能已被變更，或這隻野王已不再分享。請重新整理頁面並重新登入。"
+          : "寫入被拒絕：小隊密碼可能已被變更，或資料庫規則尚未更新（請管理員到 Firebase 重新發布最新的規則）。");
+      } else {
+        alert("寫入資料庫失敗，請檢查網路連線後重試！");
+      }
     }
 
     // 單一頻道切換（點卡片左側的「自／手」圓圈）
@@ -946,9 +955,7 @@
       }
       const next = getBossCycleMode(boss, ch) === 'auto' ? 'manual' : 'auto';
       const value = next === 'manual' ? { mode: 'manual', since: Date.now() } : { mode: 'auto' };
-      db.ref(`rooms/${roomId}/bossCycleSettings/${boss.id}/ch${ch}`).set(value).catch(() => {
-        alert("寫入資料庫失敗，請重試！");
-      });
+      db.ref(`rooms/${roomId}/bossCycleSettings/${boss.id}/ch${ch}`).set(value).catch(cycleWriteFailed);
     }
 
     function getBossCdSec(bossId) {
@@ -1590,6 +1597,7 @@
     let popSig = null;
     let popTimer = null;
     let popFlash = null;
+    let popSortByTime = true; // 小視窗排序：true = 依重生時間（預設）、false = 依頻道順序
     let popCdEls = {};
 
     const POPOUT_CSS = `
@@ -1610,6 +1618,8 @@
       .add{flex:0 0 auto;display:flex;gap:0.5rem;padding:0.5rem 0.75rem;background:#ebe3d0;border-bottom:1px solid #d8cdb2}
       .add input{width:6rem;height:2.5rem;padding:0 0.6667rem;border:1px solid #cdbf9f;border-radius:0.5rem;background:#fff;font-size:1.3333rem;font-family:inherit;user-select:text;outline:none}
       .add input:focus{border-color:#b8986c;box-shadow:0 0 0 2px rgba(184,152,108,.3)}
+      .add .sortbtn{flex:0 0 auto;height:2.5rem;padding:0 0.8333rem;border:1px solid #cdbf9f;border-radius:0.5rem;background:#fff;color:#5a4a33;font-size:1rem;font-weight:bold;letter-spacing:0;cursor:pointer;box-shadow:none;white-space:nowrap}
+      .add .sortbtn:hover{background:#f3ead6}
       .add button{flex:1;height:2.5rem;border:0;border-radius:0.5rem;background:linear-gradient(#58b85c,#3f9d44);color:#fff;font-size:1.3333rem;font-weight:bold;letter-spacing:.1em;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.22)}
       .add button:active,.row .kill:active{transform:scale(.96)}
       .list{flex:1;overflow-y:auto;padding:0.6667rem 0.6667rem 0.25rem}
@@ -1709,6 +1719,7 @@
       if (!list) return;
       const locked = popBoss.minMin !== popBoss.maxMin;
       const rows = computePopoutRows(popBoss, Date.now());
+      if (!popSortByTime) rows.sort((a, b) => a.ch - b.ch); // computePopoutRows 預設已依重生時間排序
       const sig = rows.map(r => `${r.ch}|${r.time}|${r.time2}|${r.cls}|${r.mode}|${r.solo ? 1 : 0}${r.steal ? 1 : 0}${r.unsure ? 1 : 0}`).join(',');
       if (sig !== popSig) {
         popSig = sig;
@@ -1809,7 +1820,7 @@
         <div class="hd"><span class="nm" id="ph"></span>
           <div class="seg"><button type="button" id="pa">全自動</button><button type="button" id="pm">全手動</button></div>
         </div>
-        <div class="add"><input id="pch" type="number" min="1" max="60" placeholder="頻道"><button type="button" id="pk">擊殺</button></div>
+        <div class="add"><input id="pch" type="number" min="1" max="60" placeholder="頻道"><button type="button" id="pk">擊殺</button><button type="button" id="ps" class="sortbtn" title="切換排序方式：依重生時間／依頻道順序">排序：時間</button></div>
         <div class="list" id="pl"></div>`;
       doc.getElementById('ph').textContent = popBoss.name;
       if (ALLY_MODE) doc.querySelector('.seg').style.display = 'none'; // 盟友不能全體切換巡迴模式
@@ -1823,6 +1834,16 @@
         input.focus();
       };
       doc.getElementById('pk').addEventListener('click', addKill);
+
+      // 排序切換：預設每次開啟都是「依重生時間」
+      popSortByTime = true;
+      const ps = doc.getElementById('ps');
+      ps.addEventListener('click', () => {
+        popSortByTime = !popSortByTime;
+        ps.textContent = popSortByTime ? '排序：時間' : '排序：頻道';
+        popSig = null;
+        updatePopout();
+      });
       input.addEventListener('keydown', e => { if (e.key === 'Enter') addKill(); });
 
       // 全體切換（兩段式確認）
