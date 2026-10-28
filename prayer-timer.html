@@ -3,56 +3,103 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>楓之谷祈禱提醒</title>
+<title>楓之谷經典版祈禱計時小工具</title>
 <style>
-:root{--bg:#f4f1ea;--card:#fffdf8;--ink:#2b2a26;--mut:#7a766b;--line:#e2dccd;--acc:#2f7d6d;--warn:#d6452f;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1d1c;--card:#242726;--ink:#ece8dd;--mut:#9a968a;--line:#3a3e3c;--acc:#4fb39f;--warn:#ff6b52}}
+:root{--bg:#f6f1e7;--bg2:#fbf8f1;--card:#fffdf8;--ink:#2b2a26;--mut:#7a766b;--line:#e6dfce;--acc:#2f7d6d;--acc2:#5fb49c;--warn:#d6452f;--sh:0 10px 30px rgba(60,50,20,.10),0 1px 3px rgba(60,50,20,.06);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161918;--bg2:#1d2120;--card:#242827;--ink:#ece8dd;--mut:#9a968a;--line:#3a3e3c;--acc:#4fb39f;--acc2:#7fd1bd;--warn:#ff6b52;--sh:0 10px 30px rgba(0,0,0,.35)}}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif}
-#app{max-width:300px;margin:12px auto;padding:0 12px}
+body:not(.pip){min-height:100vh;background:radial-gradient(900px 420px at 50% -140px,rgba(95,180,156,.25),transparent 70%),linear-gradient(180deg,var(--bg2),var(--bg))}
+
+/* 標題 */
+#top{text-align:center;padding:30px 16px 6px}
+#top .logo{font-size:36px;line-height:1}
+#top h1{margin:8px 0 4px;font-size:23px;font-weight:800;letter-spacing:.5px}
+#top p{margin:0;font-size:13px;color:var(--mut)}
+
+/* 版面與卡片 */
+#wrap{display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:18px;padding:14px}
+#app,#guide{background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--sh)}
+#app{width:330px;max-width:100%;padding:18px}
+#guide{width:360px;max-width:100%;padding:18px 20px;font-size:13.5px;line-height:1.75}
+#guide h2{margin:0 0 12px;font-size:16px}
+#guide ol{list-style:none;counter-reset:n;margin:0;padding:0}
+#guide li{counter-increment:n;position:relative;padding-left:36px;margin-bottom:12px}
+#guide li::before{content:counter(n);position:absolute;left:0;top:1px;width:24px;height:24px;border-radius:50%;background:linear-gradient(160deg,var(--acc2),var(--acc));color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+#guide .tip{margin-top:6px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--line);border-radius:12px;color:var(--mut);font-size:12.5px;line-height:1.65}
+#foot{max-width:720px;margin:6px auto 26px;padding:0 14px;text-align:center;font-size:11.5px;line-height:1.8;color:var(--mut)}
+
+/* 計時器（通用，懸浮小視窗也用） */
 .mini{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:3px 6px 4px;text-align:center;cursor:pointer;user-select:none}
 .t{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2;flex:1;min-width:34px}
 .s{font-size:10px;color:var(--mut);white-space:nowrap;line-height:1.3}
 .bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin:2px 0}
-.f{height:100%;width:0;background:var(--acc)}
+.f{height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .2s linear,background .3s}
 .r{display:flex;align-items:center;gap:2px}
-.mini button{flex:none;width:18px;height:20px;padding:0;font-size:11px;line-height:1;border-radius:4px;touch-action:none}
+.ttl{display:none}
+.mini button{flex:none;width:18px;height:20px;padding:0;font-size:11px;line-height:1;border-radius:4px;touch-action:none;border:1px solid var(--line);background:var(--card);color:var(--ink);font-family:inherit;cursor:pointer;transition:transform .08s,filter .15s,box-shadow .15s}
+.mini button:hover{filter:brightness(1.06)}
+.mini button:active{transform:scale(.9)}
+.mini button[data-a="s"]{background:linear-gradient(160deg,var(--acc2),var(--acc));border-color:var(--acc);color:#fff;margin-left:4px}
+.mini button[data-a="x"]{color:var(--warn);border-color:var(--warn)}
+.mini.alert{border-color:var(--warn);animation:fl .6s infinite alternate}
+.mini.alert .t,.mini.alert .s{color:var(--warn)}
+.mini.alert .f{background:var(--warn)}
+@keyframes fl{to{box-shadow:0 0 0 3px var(--warn)}}
+
+/* 主頁面的大計時器 */
+#app .mini{background:linear-gradient(160deg,rgba(95,180,156,.16),transparent 65%),var(--bg2);border-radius:16px;padding:16px 12px 12px;cursor:default}
+#app .r{flex-wrap:wrap;justify-content:center;gap:10px}
+#app .t{order:-1;flex:0 0 100%;font-size:56px;font-weight:800;letter-spacing:1px;line-height:1.1;text-align:center;margin-bottom:4px}
+#app .mini button{width:42px;height:42px;font-size:17px;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+#app .mini button[data-a="s"]{margin-left:0}
+#app .bar{height:8px;border-radius:5px;margin:14px 2px 8px}
+#app .s{font-size:12px}
+
+/* 設定 */
+#set{margin-top:14px;font-size:13.5px}
+#set label{display:flex;justify-content:space-between;align-items:center;padding:10px 2px;border-top:1px dashed var(--line);margin:0}
+#set label:first-child{border-top:0}
+input[type=number],select{padding:6px 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg2);color:var(--ink);font:inherit}
+input[type=number]{width:84px;text-align:right}
+select{max-width:180px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--acc2);outline-offset:1px}
+input[type=checkbox]{appearance:none;-webkit-appearance:none;width:44px;height:25px;border-radius:13px;background:var(--line);position:relative;cursor:pointer;transition:background .2s;margin:0}
+input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:19px;height:19px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s}
+input[type=checkbox]:checked{background:var(--acc)}
+input[type=checkbox]:checked::after{transform:translateX(19px)}
+.row{display:flex;gap:10px;margin-top:14px}
+.row button{flex:1;padding:10px 8px;border-radius:12px;border:1px solid var(--line);background:var(--bg2);color:var(--ink);font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;transition:transform .08s,filter .15s}
+.row button:hover{filter:brightness(1.05)}
+.row button:active{transform:scale(.97)}
+#pip{background:linear-gradient(160deg,var(--acc2),var(--acc));border-color:var(--acc);color:#fff}
+
+/* 懸浮小視窗 */
 .pip .s{display:none}
+.pip .ttl{display:block;font-size:10px;line-height:1.3;color:var(--mut);letter-spacing:.5px;text-align:center;margin-bottom:3px;white-space:nowrap}
 .pip .mini{padding:5px 8px 6px;border-radius:14px;background:linear-gradient(160deg,var(--card),var(--bg));box-shadow:0 1px 6px rgba(0,0,0,.12)}
 .pip .r{gap:5px}
 .pip .bar{height:4px;margin:5px 0 0;border-radius:3px}
 .pip .mini button{width:28px;height:28px;font-size:14px;border-radius:50%}
 .pip .t{font-size:24px;font-weight:800;letter-spacing:.5px}
-
-
-.mini.alert{border-color:var(--warn);animation:fl .6s infinite alternate}
-.mini.alert .t,.mini.alert .s{color:var(--warn)}
-@keyframes fl{to{box-shadow:0 0 0 2px var(--warn)}}
-#set{margin-top:12px;font-size:13px;color:var(--mut)}
-#set label{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
-input[type=number]{width:70px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit}
-select{max-width:170px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit}
-.row{display:flex;gap:8px;margin-top:10px}
-.row button{flex:1;padding:8px 6px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:13px;cursor:pointer}
-.mini button{border:1px solid var(--line);background:var(--card);color:var(--ink);font-family:inherit;cursor:pointer;transition:transform .08s,filter .15s}
-.mini button:hover{filter:brightness(1.08)}
-.mini button:active{transform:scale(.9)}
-.mini button[data-a="s"]{background:var(--acc);border-color:var(--acc);color:#fff;margin-left:4px}
-.mini button[data-a="x"]{color:var(--warn);border-color:var(--warn)}
-.f{transition:width .2s linear,background .3s}
-.mini.alert .f{background:var(--warn)}
 @keyframes redglow{from{background:#ff3b2f}to{background:#5c0d07}}
 body.pip{background:transparent}
 html:has(body.pip .mini.alert){animation:redglow .45s infinite alternate}
 .pip .mini.alert{background:transparent;border-color:transparent;box-shadow:none;animation:none}
 .pip .mini.alert .t,.pip .mini.alert .s{color:#fff}
+.pip .mini.alert .ttl{color:rgba(255,255,255,.85)}
 .pip .mini.alert .bar{background:rgba(255,255,255,.3)}
 .pip .mini.alert .f{background:#fff}
 .pip .mini.alert button[data-a="x"]{color:#fff;border-color:#fff}
-.hint{margin-top:10px;font-size:12px;line-height:1.5}
 </style>
 </head>
 <body>
+<header id="top">
+  <div class="logo">🍁</div>
+  <h1>楓之谷經典版祈禱計時小工具</h1>
+  <p>祈禱 Buff 倒數提醒・自動循環・置頂懸浮小視窗</p>
+</header>
+<div id="wrap">
 <div id="app">
   <div class="mini" id="mini"></div>
   <div id="set">
@@ -61,13 +108,40 @@ html:has(body.pip .mini.alert){animation:redglow .45s infinite alternate}
     <label>提醒音效<select id="snd"><option value="voice">語音（剩餘 X 秒鐘）</option><option value="bell">鈴聲</option><option value="scream">尖叫</option></select></label>
     <label>＋／－ 每次調整（秒）<input type="number" id="step" min="1" max="60" value="1"></label>
     <label>時間到自動重新計時<input type="checkbox" id="auto" checked></label>
-    <div class="row"><button id="test">測試音效</button><button id="pip">懸浮小視窗</button></div>
-    <div class="hint">▶ 開始／已吸 Buff 重新計時，■ 停止，按住 －／＋ 可連續增減剩餘秒數。點時間處或按空白鍵＝開始／重新計時。提醒時依所選音效播放（語音會唸「剩餘 X 秒鐘」）。</div>
+    <div class="row"><button id="test">🔔 測試音效</button><button id="pip">🪟 懸浮小視窗</button></div>
   </div>
+</div>
+<aside id="guide">
+  <h2>📖 使用說明</h2>
+  <ol>
+    <li>按左邊的 <b>「懸浮小視窗」</b>，會開出一個置頂小視窗，可以放在遊戲畫面上（需使用 Chrome 或 Edge）。</li>
+    <li><b>第一次使用請先校時：</b>在小視窗按 <b>▶</b> 開始計時，再對照遊戲裡的 Buff 剩餘時間，用 <b>－／＋</b> 把倒數調成和遊戲一樣（可以按住連續增減）。</li>
+    <li>調好之後就不用再管，時間到會<b>自動從頭計時</b>；剩下設定的秒數時，會依所選音效提醒你去吸 Buff，視窗也會閃紅光。</li>
+    <li>吸完 Buff 想立刻重新計時，按 <b>▶</b>（點時間或按空白鍵也可以）；要停止按 <b>■</b>。</li>
+    <li>Buff 時間、提醒秒數、提醒音效都可以在左邊設定，設定會自動記住。</li>
+  </ol>
+  <div class="tip">小提醒：跑一段時間後如果慢慢和遊戲對不上，再用 －／＋ 微調一次；或把「Buff 時間」改成小數（例如 117.3）。</div>
+</aside>
+</div>
+<div id="foot">
+  <div>© 2026 菇菇寶貝啾察隊-弩爾哈赤 版權所有</div>
+  <div>本工具為玩家自製，與遊戲官方及代理商無關；遊戲名稱與相關商標屬原權利人所有。</div>
+  <div id="cnt"></div>
 </div>
 <script>
 const $=id=>document.getElementById(id);
-const MINI='<div class="r"><button data-a="m" title="減少剩餘時間（可按住）">−</button><div class="t"></div><button data-a="p" title="增加剩餘時間（可按住）">＋</button><button data-a="s" title="開始／已吸 Buff 重新計時">▶</button><button data-a="x" title="停止">■</button></div><div class="bar"><div class="f"></div></div><div class="s"></div>';
+// 使用人數統計（GoatCounter，免費、不用 Cookie）：註冊後把網站代碼填在下面，例如 'mscbuff'；留空＝完全不啟用
+const GC='ycps8960103';
+if(GC){
+  const sc=document.createElement('script');sc.async=true;
+  sc.dataset.goatcounter='https://'+GC+'.goatcounter.com/count';sc.src='https://gc.zgo.at/count.js';
+  document.head.append(sc);
+  const note='本頁使用不含 Cookie 的匿名訪客統計';
+  $('cnt').textContent=note;
+  fetch('https://'+GC+'.goatcounter.com/counter/TOTAL.json').then(r=>r.json())
+    .then(j=>{$('cnt').textContent='累計造訪 '+j.count+' 次・'+note}).catch(()=>{});
+}
+const MINI='<div class="ttl">🍁 楓之谷經典版祈禱計時小工具</div><div class="r"><button data-a="m" title="減少剩餘時間（可按住）">−</button><div class="t"></div><button data-a="p" title="增加剩餘時間（可按住）">＋</button><button data-a="s" title="開始／已吸 Buff 重新計時">▶</button><button data-a="x" title="停止">■</button></div><div class="bar"><div class="f"></div></div><div class="s"></div>';
 let ctx=null,end=0,total=117.3,timer=null,tw=window,W=window,alerted=false,spoken=false,nodes=[],running=false,lastGo=0,holdT=null,holdI=null,hw=null;
 const views=[];
 function mk(box){const v={box,t:box.querySelector('.t'),f:box.querySelector('.f'),s:box.querySelector('.s')};views.push(v);return v}
@@ -127,12 +201,13 @@ function stopTicker(){try{tw.clearInterval(timer)}catch(e){}}
 function setTicker(){stopTicker();tw=W;timer=W.setInterval(tick,200)}
 function start(auto){
   save();
+  if(!window._used){window._used=1;try{window.goatcounter&&window.goatcounter.count({path:'start-timer',title:'開始計時',event:true})}catch(e){}}
   total=Math.max(10,+$('dur').value||117.3);
   clearSched();
   const now=Date.now(),nx=end+total*1000;
   // 自動循環時以「上一輪的結束時間」為基準往後加，避免每輪累積延遲
   end=(auto===true&&running&&nx>now)?nx:now+total*1000;alerted=false;spoken=false;running=true;
-  paint(v=>v.box.classList.remove('alert'));document.title='楓之谷祈禱提醒';
+  paint(v=>v.box.classList.remove('alert'));document.title='楓之谷經典版祈禱計時小工具';
   schedAll();setTicker();tick();
 }
 function go(){const n=Date.now();if(n-lastGo<300)return;lastGo=n;start()}
@@ -174,7 +249,7 @@ function tick(){
 }
 function reset(){
   stopTicker();clearSched();running=false;alerted=false;
-  document.title='楓之谷祈禱提醒';
+  document.title='楓之谷經典版祈禱計時小工具';
   paint(v=>{v.box.classList.remove('alert');v.t.textContent=fmt(+$('dur').value||117.3);v.f.style.width='0';v.s.textContent='按▶開始'});
 }
 function tap(e){
@@ -195,7 +270,7 @@ document.addEventListener('keydown',e=>{if(e.code==='Space'&&e.target.tagName!==
 function attachFloat(w,cls){
   const d=w.document;
   d.head.append(document.querySelector('style').cloneNode(true));
-  d.title='楓之谷祈禱';
+  d.title='楓之谷經典版祈禱計時小工具';
   d.body.innerHTML='';d.body.className=cls;d.body.style.cssText='margin:0;padding:2px';
   const box=d.createElement('div');box.className='mini';box.innerHTML=MINI;
   d.body.append(box);
@@ -211,9 +286,9 @@ function attachFloat(w,cls){
 $('pip').onclick=async()=>{
   if(!window.documentPictureInPicture){alert('此瀏覽器不支援置頂懸浮視窗，請改用 Chrome 或 Edge。');return}
   try{
-    const w=await documentPictureInPicture.requestWindow({width:240,height:58});
+    const w=await documentPictureInPicture.requestWindow({width:240,height:76});
     attachFloat(w,'pip');
-    try{w.resizeTo(240,58)}catch(e){}
+    try{w.resizeTo(240,76)}catch(e){}
   }catch(e){alert('無法開啟懸浮視窗：'+e.message)}
 };
 
