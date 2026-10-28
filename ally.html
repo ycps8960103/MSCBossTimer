@@ -302,6 +302,7 @@
     /* 盟友版：隱藏所有管理功能 */
     .ally-mode .btn-cd, .ally-mode .btn-admin, .ally-mode .btn-share, .ally-mode .btn-discord-set,
     .ally-mode #discord-toggle-btn, .ally-mode #online-btn, .ally-mode #cycle-switch,
+    .ally-mode .cycle-badge,
     .ally-mode .header-btns .btn-ch.reset { display: none !important; }
     .range-row { display: flex; align-items: center; gap: 0.5rem; }
     .range-row input { flex: 1; min-width: 0; }
@@ -931,6 +932,7 @@
 
     // 全體切換：一次設定這隻王所有頻道（同時清除個別頻道的設定）
     function setBossCycleMode(mode, boss = currentBoss, skipConfirm = false) {
+      if (ALLY_MODE) return; // 盟友版不提供巡迴模式功能
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
       if (mode === 'auto' && boss.minMin !== boss.maxMin) {
         alert("重生時間最大與最小不同的王，只能使用手動巡迴！");
@@ -958,6 +960,7 @@
 
     // 單一頻道切換（點卡片左側的「自／手」圓圈）
     function toggleChannelCycle(ch, boss = currentBoss) {
+      if (ALLY_MODE) return; // 盟友版不提供巡迴模式功能
       if (!isVersionValid) { alert("版本不符合，無法操作！"); return; }
       if (boss.minMin !== boss.maxMin) {
         alert("重生時間為區間的王，只能使用手動巡迴！");
@@ -1645,6 +1648,7 @@
       .mode.auto{background:#4a6278}
       .mode.manual{background:#e67e22}
       .mode.locked{opacity:.5;cursor:not-allowed}
+      body.ally .mode{display:none}
       .row .c{flex:0 0 3.3rem;font-weight:bold;font-size:1.25rem;white-space:nowrap}
       .row .t{flex:1;min-width:0;font-size:1rem;color:#8a7d66;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
       .nt{display:flex;gap:0.1667rem;flex:0 0 auto}
@@ -1834,7 +1838,10 @@
         <div class="add"><input id="pch" type="number" min="1" max="60" placeholder="頻道"><button type="button" id="pk">擊殺</button></div>
         <div class="list" id="pl"></div>`;
       doc.getElementById('ph').textContent = popBoss.name;
-      if (ALLY_MODE) doc.querySelector('.seg').style.display = 'none'; // 盟友不能全體切換巡迴模式
+      if (ALLY_MODE) {
+        doc.querySelector('.seg').style.display = 'none'; // 盟友看不到巡迴模式的任何功能（全體切換、每列的自／手圓圈）
+        doc.body.classList.add('ally');
+      }
 
       const input = doc.getElementById('pch');
       const addKill = () => {
